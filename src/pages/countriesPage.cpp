@@ -20,6 +20,22 @@
 
 // kServerFeatures is defined in uiHelpers.h
 
+namespace
+{
+// Spinner animation tick for the "Loading countries/cities" placeholders.
+constexpr int SPINNER_INTERVAL_MS = 200;
+
+// Wide country-list icon geometry: a fixed box so the star + flag pair is
+// never downscaled, with the flag always at the same offset whether or not a
+// star is drawn in front of it.
+constexpr int COUNTRY_ICON_W      = 40;
+constexpr int COUNTRY_ICON_H      = 16;
+constexpr int COUNTRY_FLAG_X      = 12;
+constexpr int COUNTRY_STAR_W      = 9;
+constexpr int COUNTRY_FLAG_W      = 20;
+constexpr int COUNTRY_FLAG_H      = 15;
+} // namespace
+
 // Helper: does a feature string contain a keyword?
 static bool hasFeature(const QString& features, const char* keyword)
 {
@@ -79,25 +95,22 @@ static void drawPinnedStar(QPainter& p, const QRect& r)
 // Wide country-list icon: optional star, then flag.
 static QIcon makeCountryListIcon(const QString& countryCode, const bool pinned)
 {
-    // Keep a fixed icon box so wide-mode star + flag are never downscaled.
-    constexpr int iconW = 40;
-    QPixmap pm(iconW, 16);
+    QPixmap pm(COUNTRY_ICON_W, COUNTRY_ICON_H);
     pm.fill(Qt::transparent);
 
     QPainter p(&pm);
     p.setRenderHint(QPainter::Antialiasing);
 
-    constexpr int x = 12; // keep flag aligned across rows; star occupies the left slot
     if (pinned)
     {
-        drawPinnedStar(p, QRect(0, 0, 9, 16));
+        drawPinnedStar(p, QRect(0, 0, COUNTRY_STAR_W, COUNTRY_ICON_H));
     }
 
     const QPixmap flag = GeoUtils::svgPixmap(
-        QStringLiteral(":/flags/") + countryCode.toLower(), 20, 15);
+        QStringLiteral(":/flags/") + countryCode.toLower(), COUNTRY_FLAG_W, COUNTRY_FLAG_H);
     if (flag.isNull() == false)
     {
-        p.drawPixmap(x, 0, flag);
+        p.drawPixmap(COUNTRY_FLAG_X, 0, flag);
     }
 
     return QIcon(pm);
@@ -351,23 +364,23 @@ CountriesPage::CountriesPage(VpnManager* manager, QWidget* parent)
 
     //  Spinners
     m_spinnerTimer = new QTimer(this);
-    m_spinnerTimer->setInterval(200);
+    m_spinnerTimer->setInterval(SPINNER_INTERVAL_MS);
     connect(m_spinnerTimer, &QTimer::timeout, this, [this]() {
         m_spinnerFrame = (m_spinnerFrame + 1) % kSpinnerFrameCount;
-        if (m_citiesList && m_citiesList->count() > 0)
+        if (m_citiesList != nullptr && m_citiesList->count() > 0)
             m_citiesList->item(0)->setText(
                 tr("%1 Loading cities\u2026").arg(QString::fromUtf8(kSpinnerFrames[m_spinnerFrame])));
     });
 
     m_countriesSpinnerTimer = new QTimer(this);
-    m_countriesSpinnerTimer->setInterval(200);
+    m_countriesSpinnerTimer->setInterval(SPINNER_INTERVAL_MS);
     connect(m_countriesSpinnerTimer, &QTimer::timeout, this, [this]() {
         m_countriesSpinnerFrame = (m_countriesSpinnerFrame + 1) % kSpinnerFrameCount;
         const QString frame = QString::fromUtf8(kSpinnerFrames[m_countriesSpinnerFrame]);
-        if (m_countriesList && m_countriesList->count() > 0)
+        if (m_countriesList != nullptr && m_countriesList->count() > 0)
             m_countriesList->item(0)->setText(
                 tr("%1 Loading countries\u2026").arg(frame));
-        if (m_narrowLoadingLabel)
+        if (m_narrowLoadingLabel != nullptr)
             m_narrowLoadingLabel->setText(
                 tr("%1 Loading countries\u2026").arg(frame));
     });
@@ -382,7 +395,7 @@ CountriesPage::CountriesPage(VpnManager* manager, QWidget* parent)
 
     // Determine initial layout mode based on current width
     m_narrowMode = width() < kNarrowThreshold;
-    m_wideWidget->setVisible(!m_narrowMode);
+    m_wideWidget->setVisible(m_narrowMode == false);
     m_narrowWidget->setVisible(m_narrowMode);
 
     // Initial loading state until countriesReady arrives.
@@ -539,7 +552,7 @@ void CountriesPage::resizeEvent(QResizeEvent* event)
 void CountriesPage::switchLayout(bool narrow)
 {
     m_narrowMode = narrow;
-    m_wideWidget->setVisible(!narrow);
+    m_wideWidget->setVisible(narrow == false);
     m_narrowWidget->setVisible(narrow);
 
     // Re-populate whichever view just became visible
@@ -1075,7 +1088,7 @@ void CountriesPage::populateNarrow()
     for (auto it = m_allCountries.constBegin(); it != m_allCountries.constEnd(); ++it)
     {
         if (it.value().compare(pinnedCode, Qt::CaseInsensitive) != 0) continue;
-        if (!search.isEmpty() && !it.key().contains(search, Qt::CaseInsensitive)) continue;
+        if (search.isEmpty() == false && it.key().contains(search, Qt::CaseInsensitive) == false) continue;
         if (anyFilter && !countryPassesFilter(it.value())) continue;
 
         addAccordion(it.key(), it.value());
@@ -1084,7 +1097,7 @@ void CountriesPage::populateNarrow()
     for (auto it = m_allCountries.constBegin(); it != m_allCountries.constEnd(); ++it)
     {
         if (it.value().compare(pinnedCode, Qt::CaseInsensitive) == 0) continue;
-        if (!search.isEmpty() && !it.key().contains(search, Qt::CaseInsensitive)) continue;
+        if (search.isEmpty() == false && it.key().contains(search, Qt::CaseInsensitive) == false) continue;
         if (anyFilter && !countryPassesFilter(it.value())) continue;
 
         addAccordion(it.key(), it.value());
@@ -1109,7 +1122,7 @@ void CountriesPage::onCitiesReady(const QString& code,
     }
 
     //  Wide mode: fill cities list if this is the selected country
-    if (!m_narrowMode && code.compare(m_selectedCode, Qt::CaseInsensitive) == 0)
+    if (m_narrowMode == false && code.compare(m_selectedCode, Qt::CaseInsensitive) == 0)
     {
         m_spinnerTimer->stop();
         if (m_citiesList == nullptr) return;
@@ -1120,7 +1133,7 @@ void CountriesPage::onCitiesReady(const QString& code,
         int filteredCount = 0;
         for (const QString& features : cities | std::views::values)
         {
-            if (!cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor))
+            if (cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor) == false)
                 continue;
             ++filteredCount;
         }
@@ -1150,7 +1163,7 @@ void CountriesPage::onCitiesReady(const QString& code,
 
         for (const auto& [city, features] : cities)
         {
-            if (!cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor))
+            if (cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor) == false)
                 continue;
 
             addWideCityItem(city, features);
@@ -1177,7 +1190,7 @@ void CountriesPage::onCitiesReady(const QString& code,
         int added = 0;
         for (const QString& features : cities | std::views::values)
         {
-            if (!cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor))
+            if (cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor) == false)
                 continue;
 
             ++added;
@@ -1193,7 +1206,7 @@ void CountriesPage::onCitiesReady(const QString& code,
         added = 0;
         for (const auto& [city, features] : cities)
         {
-            if (!cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor))
+            if (cityPassesFilters(features, m_filterP2P, m_filterSecureCore, m_filterTor) == false)
                 continue;
             addNarrowCityItem(acc.citiesLayout, city, features, code);
             ++added;
@@ -1227,7 +1240,9 @@ void CountriesPage::addWideCityItem(const QString& city, const QString& features
     hbox->setContentsMargins(0, 0, 0, 0);
     hbox->setSpacing(6);
 
-    auto* cityLabel = new QLabel(city, row);
+    // Display name only - the raw city is what gets passed to the CLI, and it
+    // is carried on the item's UserRole data by the caller.
+    auto* cityLabel = new QLabel(GeoUtils::cityWithRegion(m_selectedCode, city), row);
     cityLabel->setObjectName(QStringLiteral("cityLabel"));
     hbox->addWidget(cityLabel, 0, Qt::AlignVCenter);
     hbox->addStretch();
@@ -1306,7 +1321,8 @@ void CountriesPage::addNarrowCityItem(QVBoxLayout* layout, const QString& city,
     hbox->setSpacing(6);
 
     const bool isFastest = city.isEmpty();
-    QLabel* cityLabel = new QLabel(isFastest ? tr("\u26a1  Fastest server") : city, row);
+    QLabel* cityLabel = new QLabel(isFastest ? tr("\u26a1  Fastest server")
+                                             : GeoUtils::cityWithRegion(code, city), row);
     cityLabel->setObjectName(QStringLiteral("cityLabel"));
     if (isFastest)
     {
@@ -1314,7 +1330,7 @@ void CountriesPage::addNarrowCityItem(QVBoxLayout* layout, const QString& city,
         f.setBold(true);
         f.setItalic(true);
         cityLabel->setFont(f);
-        cityLabel->setStyleSheet(QStringLiteral("color: #ab8fff; background-color: transparent;"));
+        cityLabel->setProperty("fastest", true);
         row->setStyleSheet(QStringLiteral("background-color: rgba(109, 74, 255, 40);"));
     }
     hbox->addWidget(cityLabel, 1, Qt::AlignVCenter);
@@ -1407,7 +1423,10 @@ void CountriesPage::onWideCountrySelected(const QListWidgetItem* item)
         QListWidgetItem* li = new QListWidgetItem(tr("\u280b Loading cities\u2026"));
         li->setFlags(Qt::NoItemFlags);
         li->setForeground(QColor(0x99, 0x99, 0xbb));
-        if (m_citiesList != nullptr) m_citiesList->addItem(li);
+        if (m_citiesList != nullptr)
+        {
+            m_citiesList->addItem(li);
+        }
         m_spinnerTimer->start();
         m_manager->fetchCities(m_selectedCode);
     }
@@ -1425,7 +1444,9 @@ void CountriesPage::onWideCitySelected(const QListWidgetItem* item)
     }
     else
     {
-        m_connectBtn->setText(tr("Connect to %1, %2").arg(m_selectedCountry, m_selectedCity));
+        m_connectBtn->setText(tr("Connect to %1, %2")
+                                  .arg(m_selectedCountry,
+                                       GeoUtils::cityWithRegion(m_selectedCode, m_selectedCity)));
     }
     updateConnectBtnLockState();
 }
@@ -1453,7 +1474,7 @@ void CountriesPage::ensureCities(const QString& code)
 
 void CountriesPage::toggleAccordion(const QString& code)
 {
-    if (!m_accordion.contains(code)) return;
+    if (m_accordion.contains(code) == false) return;
     auto& acc = m_accordion[code];
     acc.expanded = !acc.expanded;
 

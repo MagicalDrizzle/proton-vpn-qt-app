@@ -26,6 +26,8 @@ public:
     bool notifications() const;
     int  recentConnectionsCount() const;
     bool startHidden() const;
+    // True when closing the window hides to the tray instead of quitting.
+    bool closeToTray() const;
     Theme theme() const;
     bool showLocationPicker() const;
     bool showFavoritesDropdown() const;
@@ -39,6 +41,7 @@ public:
     void setNotifications(bool value);
     void setRecentConnectionsCount(int value);
     void setStartHidden(bool value);
+    void setCloseToTray(bool value);
     void setTheme(Theme value);
     void setShowLocationPicker(bool value);
     void setShowFavoritesDropdown(bool value);
@@ -57,11 +60,15 @@ private:
     void load();
     bool save() const;
 
+    // Single source of truth for the Theme <-> config-string mapping.
+    static QString themeName(Theme theme);
+
     bool m_autoConnect    = false;
     QString m_autoConnectServer;
     bool m_notifications  = true;
     int  m_recentConnectionsCount = 5;
     bool m_startHidden = false;
+    bool m_closeToTray = true;
     Theme m_theme = Theme::System;
     bool m_showLocationPicker = true;
     bool m_showFavoritesDropdown = true;

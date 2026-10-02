@@ -35,7 +35,7 @@ body:
     attributes:
       label: Additional Context
       description: >
-        Any extra information that might be helpful — OS, package manager, relevant terminal output,
+        Any extra information that might be helpful: OS, package manager, relevant terminal output,
         links, etc.
     validations:
       required: false

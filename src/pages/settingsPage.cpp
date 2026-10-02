@@ -7,7 +7,7 @@
 #include "../geoUtils.h"
 #include "../themeManager.h"
 #include "../uiHelpers.h"
-#include "../cli/flatpakUtils.h"
+#include "../cli/platformUtils.h"
 #include "../widgets/numberSpinner.h"
 #include "../widgets/toastNotification.h"
 #include "../widgets/toggleWithStatus.h"
@@ -15,7 +15,6 @@
 #include <QApplication>
 #include <QButtonGroup>
 #include <QClipboard>
-#include <QCoreApplication>
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -33,6 +32,7 @@
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QStyle>
+#include <QSystemTrayIcon>
 #include <QTextBrowser>
 #include <QVersionNumber>
 #include <QVBoxLayout>
@@ -156,7 +156,6 @@ QWidget* makeTextCol(QWidget* parent, const QString& label, const QString& desc)
         QFont f = descL->font();
         f.setPointSize(qMax(f.pointSize() - DESC_FONT_REDUCTION, DESC_FONT_MIN_SIZE));
         descL->setFont(f);
-        descL->setStyleSheet(QStringLiteral("color: #888;"));
         col->addWidget(descL);
     }
     return w;
@@ -239,7 +238,7 @@ void SettingsPage::showReconnectDialog(const QString& settingLabel,
 
     QLabel* heading = new QLabel(
         QStringLiteral("<b>%1</b>")
-            .arg(tr("%1 \u2014 Reconnect Required").arg(settingLabel).toHtmlEscaped()),
+            .arg(tr("%1: Reconnect Required").arg(settingLabel).toHtmlEscaped()),
         dlg);
     heading->setTextFormat(Qt::RichText);
 
@@ -382,122 +381,36 @@ QWidget* SettingsPage::makeComboRow(QWidget* parent, const QString& label,
 // SettingsPage constructor
 // ============================================================
 
-void SettingsPage::updateAutoConnectRowVisibility() const
+// Scroll area + "infoCard" container for a settings tab.
+// static
+std::pair<QWidget*, QVBoxLayout*> SettingsPage::makeTabCard(QWidget* tabPage)
 {
-    if (m_autoConnectRow == nullptr) return;
-    const bool show = m_autoStartToggle != nullptr && m_autoStartToggle->isOn();
-    m_autoConnectRow->setVisible(show);
-    // If auto-start is turned off, also disable auto-connect and persist that.
-    if (show == false && m_autoConnectToggle != nullptr && m_autoConnectToggle->isOn())
-    {
-        m_autoConnectToggle->setOn(false, false);
-        AppConfig::instance().setAutoConnect(false);
-    }
-    updateAutoConnectServerRow();
+    QScrollArea* scroll = new QScrollArea(tabPage);
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    // The viewport's own background is handled by the global
+    // "QScrollArea > QWidget" QSS rule, not a local setStyleSheet() call
+    // here: a *local* stylesheet on an ancestor silently breaks
+    // background-color painting for ID-selector-styled descendants
+    // further down the tree (e.g. #infoCard), even though borders still
+    // render fine. Confirmed by isolated testing; cost real time to find.
+    QVBoxLayout* pageLayout = new QVBoxLayout(tabPage);
+    pageLayout->setContentsMargins(0, PAGE_LAYOUT_TOP_MARGIN, 0, 0);
+    pageLayout->setSpacing(PAGE_LAYOUT_SPACING);
+    pageLayout->addWidget(scroll, 1);
+
+    QWidget* card = new QWidget();
+    card->setObjectName(QStringLiteral("infoCard"));
+    QVBoxLayout* cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(0, 0, 0, 0);
+    cardLayout->setSpacing(0);
+    scroll->setWidget(card);
+    return {card, cardLayout};
 }
 
-void SettingsPage::populateAutoConnectServerCombo() const
+// App tab: startup, notifications, history, favorites, logging, about.
+void SettingsPage::buildAppTab(QTabWidget* tabs)
 {
-    if (m_autoConnectServerCombo == nullptr) return;
-
-    const QString saved = AppConfig::instance().autoConnectServer();
-
-    const QSignalBlocker blocker(m_autoConnectServerCombo);
-    m_autoConnectServerCombo->clear();
-    m_autoConnectServerCombo->addItem(tr("Fastest Server"), QString());
-
-    const QList<FavoriteEntry> favs = FavoritesManager::instance().entries();
-    for (const FavoriteEntry& e : favs)
-    {
-        const QString key = e.city.isEmpty()
-            ? e.countryCode
-            : e.countryCode + QStringLiteral("|") + e.city;
-        const QString display = e.city.isEmpty()
-            ? tr("%1 - Fastest").arg(e.countryName)
-            : tr("%1 - %2").arg(e.countryName, e.city);
-        m_autoConnectServerCombo->addItem(display, key);
-    }
-
-    // Restore saved selection (or stay on index 0 if not found).
-    int idx = 0;
-    for (int i = 1; i < m_autoConnectServerCombo->count(); ++i)
-    {
-        if (m_autoConnectServerCombo->itemData(i).toString() == saved)
-        {
-            idx = i;
-            break;
-        }
-    }
-    m_autoConnectServerCombo->setCurrentIndex(idx);
-}
-
-void SettingsPage::updateAutoConnectServerRow() const
-{
-    if (m_autoConnectServerRow == nullptr) return;
-
-    const bool autoConnectOn = m_autoConnectToggle != nullptr && m_autoConnectToggle->isOn();
-    const bool autoStartOn   = m_autoStartToggle   != nullptr && m_autoStartToggle->isOn();
-    const bool show          = autoStartOn && autoConnectOn;
-    m_autoConnectServerRow->setVisible(show);
-
-    if (m_autoConnectServerCombo == nullptr) return;
-
-    const bool hasFavorites = FavoritesManager::instance().hasAnyEntries();
-    m_autoConnectServerRow->setEnabled(hasFavorites);
-    if (hasFavorites == false)
-    {
-        const QString tip = tr("Add favorite servers to choose a specific server for auto-connect.");
-        m_autoConnectServerRow->setToolTip(tip);
-        m_autoConnectServerCombo->setToolTip(tip);
-    }
-    else
-    {
-        m_autoConnectServerRow->setToolTip(QString());
-        m_autoConnectServerCombo->setToolTip(QString());
-    }
-}
-
-SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QWidget* parent)
-    : QWidget(parent), m_manager(manager), m_natPmpManager(natPmpManager)
-{
-    QVBoxLayout* outerLayout = new QVBoxLayout(this);
-    outerLayout->setContentsMargins(OUTER_LAYOUT_MARGIN, OUTER_LAYOUT_MARGIN,
-                                    OUTER_LAYOUT_MARGIN, OUTER_LAYOUT_MARGIN);
-    outerLayout->setSpacing(OUTER_LAYOUT_SPACING);
-
-    QLabel* titleLabel = new QLabel(tr("Settings"), this);
-    titleLabel->setObjectName(QStringLiteral("sectionTitle"));
-    outerLayout->addWidget(titleLabel);
-
-    QTabWidget* tabs = new QTabWidget(this);
-    tabs->setObjectName(QStringLiteral("settingsTabs"));
-    outerLayout->addWidget(tabs, 1);
-
-    auto makeCard = [&](QWidget* tabPage) -> std::pair<QWidget*, QVBoxLayout*>
-    {
-        QScrollArea* scroll = new QScrollArea(tabPage);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        // The viewport's own background is handled by the global
-        // "QScrollArea > QWidget" QSS rule, not a local setStyleSheet() call
-        // here — a *local* stylesheet on an ancestor silently breaks
-        // background-color painting for ID-selector-styled descendants
-        // further down the tree (e.g. #infoCard), even though borders still
-        // render fine. Confirmed by isolated testing; cost real time to find.
-        QVBoxLayout* pageLayout = new QVBoxLayout(tabPage);
-        pageLayout->setContentsMargins(0, PAGE_LAYOUT_TOP_MARGIN, 0, 0);
-        pageLayout->setSpacing(PAGE_LAYOUT_SPACING);
-        pageLayout->addWidget(scroll, 1);
-
-        QWidget* card = new QWidget();
-        card->setObjectName(QStringLiteral("infoCard"));
-        QVBoxLayout* cardLayout = new QVBoxLayout(card);
-        cardLayout->setContentsMargins(0, 0, 0, 0);
-        cardLayout->setSpacing(0);
-        scroll->setWidget(card);
-        return {card, cardLayout};
-    };
-
     // ============================================================
     // TAB 1 – App
     // ============================================================
@@ -508,7 +421,7 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
         QScrollArea* scroll = new QScrollArea(appTab);
         scroll->setWidgetResizable(true);
         scroll->setFrameShape(QFrame::NoFrame);
-        // See the comment on the equivalent construction in makeCard() above.
+        // See the comment on the equivalent construction in makeTabCard() above.
         QVBoxLayout* pageLayout = new QVBoxLayout(appTab);
         pageLayout->setContentsMargins(0, PAGE_LAYOUT_TOP_MARGIN, 0, 0);
         pageLayout->setSpacing(0);
@@ -680,6 +593,41 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
             });
             rl->addWidget(toggle);
             addStartup(row);
+        }
+
+        //  Section: Window
+        addHeader(tr("Window"));
+        auto [windowCard, windowLayout] = makeAppCard();
+
+        {
+            QWidget* row = new QWidget(windowCard);
+            QHBoxLayout* rl = new QHBoxLayout(row);
+            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
+                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
+            rl->setSpacing(SETTING_ROW_SPACING);
+            rl->addWidget(makeTextCol(row,
+                                      tr("Close to Tray"),
+                                      tr("Closing the window keeps ProtonVPN running in the "
+                                         "system tray. Turn this off to quit the app when the "
+                                         "window is closed.")), 1);
+            ToggleWithStatus* closeToTrayToggle = new ToggleWithStatus(row);
+            closeToTrayToggle->setOn(AppConfig::instance().closeToTray(), false);
+            connect(closeToTrayToggle, &ToggleWithStatus::toggled, this, [](const bool on)
+            {
+                AppConfig::instance().setCloseToTray(on);
+            });
+            rl->addWidget(closeToTrayToggle);
+
+            // With no system tray there is nowhere to close to, so the window
+            // always quits and the choice would be a lie.
+            if (QSystemTrayIcon::isSystemTrayAvailable() == false)
+            {
+                row->setEnabled(false);
+                row->setToolTip(tr("Your desktop does not provide a system tray, so closing "
+                                   "the window always quits the app."));
+            }
+
+            windowLayout->addWidget(row);
         }
 
         //  Section: Notifications
@@ -978,13 +926,17 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
 
         appContentLayout->addStretch();
     } // end App tab scroll area
+}
 
+// Appearance tab: theme and which pickers the VPN page shows.
+void SettingsPage::buildAppearanceTab(QTabWidget* tabs)
+{
     // ============================================================
     // TAB 2 – Appearance
     // ============================================================
     {
         QWidget* appearanceTab = new QWidget();
-        auto [appearanceCard, appearanceCardLayout] = makeCard(appearanceTab);
+        auto [appearanceCard, appearanceCardLayout] = makeTabCard(appearanceTab);
         tabs->addTab(appearanceTab, tr("Appearance"));
 
         bool appearanceFirst = true;
@@ -1089,12 +1041,16 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
 
         appearanceCardLayout->addStretch();
     }
+}
 
+// VPN tab: everything applied through `protonvpn config set`.
+void SettingsPage::buildVpnTab(QTabWidget* tabs)
+{
     // ============================================================
     // TAB 3 – VPN
     // ============================================================
     QWidget* vpnTab = new QWidget();
-    auto [vpnCard, vpnCardLayout] = makeCard(vpnTab);
+    auto [vpnCard, vpnCardLayout] = makeTabCard(vpnTab);
     m_vpnCard = vpnCard;
 
     {
@@ -1208,10 +1164,7 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
 
             QLabel* titleLbl = new QLabel(title, textCol);
             titleLbl->setObjectName(QStringLiteral("infoKey"));
-            if (enabled == false)
-            {
-                titleLbl->setStyleSheet(QStringLiteral("color: #555;"));
-            }
+            titleLbl->setProperty("disabled", enabled == false);
             vl->addWidget(titleLbl);
 
             QLabel* descLbl = new QLabel(desc, textCol);
@@ -1220,9 +1173,7 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
             QFont f = descLbl->font();
             f.setPointSize(qMax(f.pointSize() - DESC_FONT_REDUCTION, DESC_FONT_MIN_SIZE));
             descLbl->setFont(f);
-            descLbl->setStyleSheet(enabled == true
-                ? QStringLiteral("color: #888;")
-                : QStringLiteral("color: #444;"));
+            descLbl->setProperty("disabled", enabled == false);
             vl->addWidget(descLbl);
 
             hl->addWidget(textCol, 1);
@@ -1642,6 +1593,103 @@ SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QW
     }
 
     vpnCardLayout->addStretch();
+}
+
+
+void SettingsPage::updateAutoConnectRowVisibility() const
+{
+    if (m_autoConnectRow == nullptr) return;
+    const bool show = m_autoStartToggle != nullptr && m_autoStartToggle->isOn();
+    m_autoConnectRow->setVisible(show);
+    // If auto-start is turned off, also disable auto-connect and persist that.
+    if (show == false && m_autoConnectToggle != nullptr && m_autoConnectToggle->isOn())
+    {
+        m_autoConnectToggle->setOn(false, false);
+        AppConfig::instance().setAutoConnect(false);
+    }
+    updateAutoConnectServerRow();
+}
+
+void SettingsPage::populateAutoConnectServerCombo() const
+{
+    if (m_autoConnectServerCombo == nullptr) return;
+
+    const QString saved = AppConfig::instance().autoConnectServer();
+
+    const QSignalBlocker blocker(m_autoConnectServerCombo);
+    m_autoConnectServerCombo->clear();
+    m_autoConnectServerCombo->addItem(tr("Fastest Server"), QString());
+
+    const QList<FavoriteEntry> favs = FavoritesManager::instance().entries();
+    for (const FavoriteEntry& e : favs)
+    {
+        const QString key = e.city.isEmpty()
+            ? e.countryCode
+            : e.countryCode + QStringLiteral("|") + e.city;
+        const QString display = e.city.isEmpty()
+            ? tr("%1 - Fastest").arg(e.countryName)
+            : tr("%1 - %2").arg(e.countryName, e.city);
+        m_autoConnectServerCombo->addItem(display, key);
+    }
+
+    // Restore saved selection (or stay on index 0 if not found).
+    int idx = 0;
+    for (int i = 1; i < m_autoConnectServerCombo->count(); ++i)
+    {
+        if (m_autoConnectServerCombo->itemData(i).toString() == saved)
+        {
+            idx = i;
+            break;
+        }
+    }
+    m_autoConnectServerCombo->setCurrentIndex(idx);
+}
+
+void SettingsPage::updateAutoConnectServerRow() const
+{
+    if (m_autoConnectServerRow == nullptr) return;
+
+    const bool autoConnectOn = m_autoConnectToggle != nullptr && m_autoConnectToggle->isOn();
+    const bool autoStartOn   = m_autoStartToggle   != nullptr && m_autoStartToggle->isOn();
+    const bool show          = autoStartOn && autoConnectOn;
+    m_autoConnectServerRow->setVisible(show);
+
+    if (m_autoConnectServerCombo == nullptr) return;
+
+    const bool hasFavorites = FavoritesManager::instance().hasAnyEntries();
+    m_autoConnectServerRow->setEnabled(hasFavorites);
+    if (hasFavorites == false)
+    {
+        const QString tip = tr("Add favorite servers to choose a specific server for auto-connect.");
+        m_autoConnectServerRow->setToolTip(tip);
+        m_autoConnectServerCombo->setToolTip(tip);
+    }
+    else
+    {
+        m_autoConnectServerRow->setToolTip(QString());
+        m_autoConnectServerCombo->setToolTip(QString());
+    }
+}
+
+SettingsPage::SettingsPage(VpnManager* manager, NatPmpManager* natPmpManager, QWidget* parent)
+    : QWidget(parent), m_manager(manager), m_natPmpManager(natPmpManager)
+{
+    QVBoxLayout* outerLayout = new QVBoxLayout(this);
+    outerLayout->setContentsMargins(OUTER_LAYOUT_MARGIN, OUTER_LAYOUT_MARGIN,
+                                    OUTER_LAYOUT_MARGIN, OUTER_LAYOUT_MARGIN);
+    outerLayout->setSpacing(OUTER_LAYOUT_SPACING);
+
+    QLabel* titleLabel = new QLabel(tr("Settings"), this);
+    titleLabel->setObjectName(QStringLiteral("sectionTitle"));
+    outerLayout->addWidget(titleLabel);
+
+    QTabWidget* tabs = new QTabWidget(this);
+    tabs->setObjectName(QStringLiteral("settingsTabs"));
+    outerLayout->addWidget(tabs, 1);
+
+    buildAppTab(tabs);
+    buildAppearanceTab(tabs);
+    buildVpnTab(tabs);
 
     updatePlusSectionState();
 
@@ -1921,10 +1969,7 @@ bool SettingsPage::setAutoStart(const bool enable, QString& errorOut)
         templateFile.close();
 
         // Substitute the executable path placeholder.
-        const QString exec = isRunningAsFlatpak()
-            ? QStringLiteral("flatpak run ") + QString::fromUtf8(qgetenv("FLATPAK_ID"))
-            : QCoreApplication::applicationFilePath();
-        content.replace(QStringLiteral("@EXEC@"), exec);
+        content.replace(QStringLiteral("@EXEC@"), PlatformUtils::autostartExecCommand());
 
         if (DRY_RUN_MODE == true)
         {

@@ -6,6 +6,7 @@
 #include "../vpnManager.h"
 
 #include "../debug.h"
+#include "cliNoiseFilter.h"
 #include "flatpakUtils.h"
 #include "statusMonitor.h"
 
@@ -13,6 +14,7 @@
 #include <QRegularExpression>
 #include <QTimer>
 #include <functional>
+#include <memory>
 #include <ranges>
 #include <unistd.h>
 
@@ -23,17 +25,81 @@
 
 namespace
 {
-constexpr int CLI_START_TIMEOUT_MS       = 2000;
 constexpr int DISCONNECT_SYNC_TIMEOUT_MS = 10000;
 constexpr int LOGIN_CHECK_RETRIES = 5;
 constexpr int MIN_COUNTRY_PARTS          = 2;
 constexpr int NETWORK_READY_CHECK_RETRIES = 5;
 constexpr int AUTO_CONNECT_RETRIES        = 5;
 
+// `protonvpn info` normally answers in well under a second. The limit is
+// generous because the CLI may be legitimately waiting on a keyring unlock
+// prompt the user is still typing into.
+constexpr int LOGIN_CHECK_TIMEOUT_MS = 30000;
+// How long a timed-out CLI gets to exit after SIGTERM before it is killed.
+constexpr int CLI_TERMINATE_GRACE_MS = 2000;
+// Exit codes runCommand() reports when the CLI never produced one of its own.
+// Negative, so they can never collide with a real process exit status.
+constexpr int CLI_EXIT_FAILED_TO_START = -1;
+constexpr int CLI_EXIT_TIMED_OUT       = -2;
+
 // Returns {program, fullArgs} ready for QProcess::start.
 std::pair<QString, QStringList> buildCliCommand(const QStringList& args)
 {
     return buildHostCommand(QStringLiteral("protonvpn"), args);
+}
+
+// True when the CLI output contains a line that actually reports a failure.
+//
+// This deliberately anchors on the start of a line instead of searching the
+// whole output for "error": the CLI prints warnings and guidance that merely
+// contain that word, and matching those marked a *successful* sign-in as
+// failed - leaving the user staring at a login error while already signed in,
+// with the status monitor never started.
+bool hasCliErrorLine(const QString& combined)
+{
+    const QStringList lines = combined.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    for (const QString& line : lines)
+    {
+        const QString l = line.trimmed().toLower();
+        if (l.startsWith(QLatin1String("error"))) return true;
+        if (l.startsWith(QLatin1String("failed"))) return true;
+        if (l.contains(QLatin1String("invalid credentials"))) return true;
+        if (l.contains(QLatin1String("incorrect login"))) return true;
+    }
+    return false;
+}
+
+// Masks all but the first character of the account name. Log files are routinely
+// attached to bug reports, so the account they were produced with should not be
+// readable in them.
+QString redactUsername(const QString& username)
+{
+    if (username.isEmpty()) return QStringLiteral("(empty)");
+
+    const int atPos = username.indexOf(QLatin1Char('@'));
+    const QString local  = (atPos >= 0) ? username.left(atPos) : username;
+    const QString domain = (atPos >= 0) ? username.mid(atPos)  : QString();
+    return local.left(1)
+           + QString(qMax(0, static_cast<int>(local.size()) - 1), QLatin1Char('*'))
+           + domain;
+}
+
+// Masks account names inside captured CLI output before it reaches the log.
+// `protonvpn info` prints "Account: 'name@example.com'", which would otherwise
+// be written verbatim into any log file the user shares.
+QString redactCliOutput(const QString& text)
+{
+    static const QRegularExpression accountRe(QStringLiteral(R"(Account:\s*'([^']*)')"));
+
+    QString result = text;
+    QRegularExpressionMatchIterator it = accountRe.globalMatch(text);
+    while (it.hasNext())
+    {
+        const QRegularExpressionMatch m = it.next();
+        result.replace(m.captured(0),
+                       QStringLiteral("Account: '%1'").arg(redactUsername(m.captured(1))));
+    }
+    return result;
 }
 } // namespace
 
@@ -42,25 +108,81 @@ std::pair<QString, QStringList> buildCliCommand(const QStringList& args)
 // ---------------------------------------------------------------------------
 
 void VpnManager::runCommand(const QStringList& args,
-                            const std::function<void(int, const QString&, const QString&)>& callback)
+                            const std::function<void(int, const QString&, const QString&)>& callback,
+                            int timeoutMs)
 {
     QProcess* process = new QProcess(this);
     const QString cmdLine = QStringLiteral("protonvpn ") + args.join(QLatin1Char(' '));
     DBG_CLI(QStringLiteral(">>> ") + cmdLine);
-    connect(process, &QProcess::finished,
-            this, [process, callback, cmdLine](int exitCode, QProcess::ExitStatus)
+
+    // Set when the watchdog gives up on the process, so finished() reports a
+    // timeout rather than the exit code of the signal that ended it.
+    std::shared_ptr<bool> timedOut = std::make_shared<bool>(false);
+    QTimer* watchdog = nullptr;
+    if (timeoutMs != CLI_NO_TIMEOUT)
+    {
+        watchdog = new QTimer(process);
+        watchdog->setSingleShot(true);
+        connect(watchdog, &QTimer::timeout, process, [process, timedOut, cmdLine, timeoutMs]()
+        {
+            *timedOut = true;
+            DBG_CLI(QStringLiteral("No response from '%1' after %2 ms - terminating it.")
+                        .arg(cmdLine).arg(timeoutMs));
+            // SIGTERM first: under Flatpak the child is flatpak-spawn, which
+            // forwards SIGTERM to the real CLI on the host, whereas SIGKILL
+            // would only kill flatpak-spawn and leave the CLI running.
+            process->terminate();
+            QTimer::singleShot(CLI_TERMINATE_GRACE_MS, process, [process]()
             {
+                if (process->state() != QProcess::NotRunning)
+                {
+                    process->kill();
+                }
+            });
+        });
+        watchdog->start(timeoutMs);
+    }
+
+    // A program that cannot be started never emits finished(), so without this
+    // the callback - and anything waiting on it - would never run.
+    connect(process, &QProcess::errorOccurred,
+            this, [process, callback, cmdLine, watchdog](QProcess::ProcessError error)
+            {
+                if (error != QProcess::FailedToStart) return;
+                if (watchdog != nullptr)
+                {
+                    watchdog->stop();
+                }
+                DBG_CLI(QStringLiteral("<<< ") + cmdLine +
+                        QStringLiteral(" [failed to start: ") + process->errorString() + QStringLiteral("]"));
+                callback(CLI_EXIT_FAILED_TO_START, QString(), process->errorString());
+                process->deleteLater();
+            });
+
+    connect(process, &QProcess::finished,
+            this, [process, callback, cmdLine, watchdog, timedOut](int exitCode, QProcess::ExitStatus)
+            {
+                if (watchdog != nullptr)
+                {
+                    watchdog->stop();
+                }
+                if (*timedOut == true)
+                {
+                    exitCode = CLI_EXIT_TIMED_OUT;
+                }
                 const QString out = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
                 const QString err = QString::fromUtf8(process->readAllStandardError()).trimmed();
                 DBG_CLI(QStringLiteral("<<< ") + cmdLine +
-                        QStringLiteral(" [exit=") + QString::number(exitCode) + QStringLiteral("]"));
+                        (*timedOut == true
+                             ? QStringLiteral(" [timed out]")
+                             : QStringLiteral(" [exit=") + QString::number(exitCode) + QStringLiteral("]")));
                 if (out.isEmpty() == false)
                 {
-                    DBG_CLI(QStringLiteral("    stdout: ") + out);
+                    DBG_CLI(QStringLiteral("    stdout: ") + redactCliOutput(out));
                 }
                 if (err.isEmpty() == false)
                 {
-                    DBG_CLI(QStringLiteral("    stderr: ") + err);
+                    DBG_CLI(QStringLiteral("    stderr: ") + redactCliOutput(err));
                 }
                 callback(exitCode, out, err);
                 process->deleteLater();
@@ -77,10 +199,23 @@ void VpnManager::checkInstalled()
 {
     DBG_CLI(QStringLiteral("Checking if protonvpn CLI is installed..."));
     QProcess* process = new QProcess(this);
+
+    // Guard so exactly one of finished()/errorOccurred() reports the result.
+    // The previous version blocked the GUI on waitForStarted() during startup
+    // and could both report "not installed" and later delete a process that
+    // was still starting.
+    std::shared_ptr<bool> reported = std::make_shared<bool>(false);
+
     connect(process, &QProcess::finished,
-            this, [this, process](const int exitCode, QProcess::ExitStatus)
+            this, [this, process, reported](const int exitCode, QProcess::ExitStatus)
             {
                 Q_UNUSED(exitCode)
+                if (*reported == true)
+                {
+                    process->deleteLater();
+                    return;
+                }
+                *reported = true;
                 const QString out = QString::fromUtf8(process->readAllStandardOutput());
                 const QString err = QString::fromUtf8(process->readAllStandardError());
                 const bool installed = out.isEmpty() == false || err.isEmpty() == false;
@@ -88,13 +223,20 @@ void VpnManager::checkInstalled()
                 DBG_CLI(installed ? QStringLiteral("protonvpn CLI found.") : QStringLiteral("protonvpn CLI NOT found."));
                 emit installedResult(installed);
             });
+
+    connect(process, &QProcess::errorOccurred,
+            this, [this, process, reported](QProcess::ProcessError error)
+            {
+                if (*reported == true) return;
+                *reported = true;
+                DBG_CLI(QStringLiteral("protonvpn CLI NOT found (QProcess::ProcessError=%1).")
+                            .arg(error));
+                process->deleteLater();
+                emit installedResult(false);
+            });
+
     auto [program, fullArgs] = buildCliCommand({QStringLiteral("--help")});
     process->start(program, fullArgs);
-    if (process->waitForStarted(CLI_START_TIMEOUT_MS) == false)
-    {
-        process->deleteLater();
-        emit installedResult(false);
-    }
 }
 
 void VpnManager::checkLoginStatus()
@@ -106,12 +248,31 @@ void VpnManager::checkLoginStatus(int retriesLeft)
 {
     runCommand({QStringLiteral("info")}, [this, retriesLeft](int exitCode, const QString& out, const QString&)
     {
+        // A CLI that never answers is usually blocked on something only the
+        // user can resolve (e.g. a keyring unlock prompt). Retrying on a timer
+        // would just hold the app on "Starting..." for another full timeout.
+        if (exitCode == CLI_EXIT_TIMED_OUT)
+        {
+            DBG_CLI(QStringLiteral("checkLoginStatus: protonvpn info did not respond within %1 ms.")
+                        .arg(LOGIN_CHECK_TIMEOUT_MS));
+            emit loginCheckTimedOut();
+            return;
+        }
+
+        // checkInstalled() found the CLI moments ago, but it can no longer be
+        // started (e.g. it was uninstalled in the meantime).
+        if (exitCode == CLI_EXIT_FAILED_TO_START)
+        {
+            emit installedResult(false);
+            return;
+        }
+
         const QRegularExpression re(QStringLiteral(R"(Account:\s*'([^']+)')"));
         const QRegularExpressionMatch match = re.match(out);
 
         if (match.hasMatch())
         {
-            // CLI responded correctly — determine logged-in state from the value.
+            // CLI responded correctly - determine logged-in state from the value.
             const QString accountVal = match.captured(1).trimmed();
             const bool loggedIn = (accountVal != QStringLiteral("None") && accountVal.isEmpty() == false);
             if (loggedIn)
@@ -122,7 +283,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
             }
             else
             {
-                // Explicit "Account: 'None'" — genuinely not logged in, no point retrying.
+                // Explicit "Account: 'None'" - genuinely not logged in, no point retrying.
                 emit loginStatusResult(false, QString());
             }
             return;
@@ -147,12 +308,12 @@ void VpnManager::checkLoginStatus(int retriesLeft)
         {
             emit loginStatusResult(false, QString());
         }
-    });
+    }, LOGIN_CHECK_TIMEOUT_MS);
 }
 
 void VpnManager::login(const QString& username, const QString& password)
 {
-    DBG_CLI(QStringLiteral("Login attempt for user: ") + username);
+    DBG_CLI(QStringLiteral("Login attempt for user: ") + redactUsername(username));
     // CLI flow: protonvpn signin <username>
     //   stderr: "Password: "   -> write password + '\n' to stdin
     //   stderr: "2FA Token: "  -> optional; emit twoFactorRequired()
@@ -169,7 +330,7 @@ void VpnManager::login(const QString& username, const QString& password)
 
     // When the Qt app is launched from a terminal, child processes inherit the
     // controlling terminal.  Python's getpass.getpass() then opens /dev/tty
-    // directly, bypassing the QProcess stdin pipe — the password prompt appears
+    // directly, bypassing the QProcess stdin pipe, so the password prompt appears
     // on the user's terminal rather than being captured here.
     // setsid() in the child (between fork and exec) creates a new session with
     // no controlling terminal, so getpass falls back to writing the prompt to
@@ -235,8 +396,7 @@ void VpnManager::login(const QString& username, const QString& password)
                 m_signinProcess = nullptr;
                 process->deleteLater();
 
-                const bool outputHasError = combined.contains(QStringLiteral("error"), Qt::CaseInsensitive);
-                const bool ok = exitCode == 0 && outputHasError == false;
+                const bool ok = exitCode == 0 && hasCliErrorLine(combined) == false;
                 DBG_CLI(ok ? QStringLiteral("Login succeeded.") : QStringLiteral("Login failed (exit=") + QString::number(exitCode) + QStringLiteral(")."));
                 QString errorMsg;
                 if (ok == false)
@@ -340,9 +500,20 @@ void VpnManager::startupAutoConnect(const QString& country, const QString& city)
 void VpnManager::checkNetworkReady(int retriesLeft, const std::function<void()>& onReady)
 {
     QProcess* process = new QProcess(this);
+
+    // Guard so onReady() runs exactly once: a launch failure and a late finish
+    // must not both fire it, which would issue the connect twice.
+    std::shared_ptr<bool> reported = std::make_shared<bool>(false);
+
     connect(process, &QProcess::finished, this,
-            [this, process, retriesLeft, onReady](int exitCode, QProcess::ExitStatus)
+            [this, process, retriesLeft, onReady, reported](int exitCode, QProcess::ExitStatus)
     {
+        if (*reported == true)
+        {
+            process->deleteLater();
+            return;
+        }
+        *reported = true;
         const QString out = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
         process->deleteLater();
 
@@ -367,17 +538,23 @@ void VpnManager::checkNetworkReady(int retriesLeft, const std::function<void()>&
         });
     });
 
+    // nmcli missing or failed to launch - fail open rather than block
+    // auto-connect indefinitely on a system without NetworkManager/nmcli.
+    connect(process, &QProcess::errorOccurred, this,
+            [process, onReady, reported](QProcess::ProcessError error)
+    {
+        if (*reported == true) return;
+        *reported = true;
+        DBG_CLI(QStringLiteral("nmcli could not be launched (QProcess::ProcessError=%1) - "
+                               "proceeding without a network-ready check.").arg(error));
+        process->deleteLater();
+        onReady();
+    });
+
     auto [program, fullArgs] = buildHostCommand(QStringLiteral("nmcli"),
         {QStringLiteral("-t"), QStringLiteral("-f"), QStringLiteral("STATE"),
          QStringLiteral("general"), QStringLiteral("status")});
     process->start(program, fullArgs);
-    if (process->waitForStarted(CLI_START_TIMEOUT_MS) == false)
-    {
-        // nmcli missing or failed to launch - fail open rather than block
-        // auto-connect indefinitely on a system without NetworkManager/nmcli.
-        process->deleteLater();
-        onReady();
-    }
 }
 
 void VpnManager::issueConnect(const QString& country, const QString& city, int retriesLeft)
@@ -399,17 +576,7 @@ void VpnManager::issueConnect(const QString& country, const QString& city, int r
             DBG_CLI(QStringLiteral("VPN connected successfully."));
             m_state = VpnState::Connected;
             // Strip noise / port-forwarding guidelines from CLI output.
-            QStringList lines = out.split(QLatin1Char('\n'));
-            lines.erase(std::ranges::remove_if(lines, [](const QString& l)
-            {
-                const QString ll = l.toLower();
-                return ll.contains(QLatin1String("outdated")) ||
-                    ll.contains(QLatin1String("updating")) ||
-                    ll.contains(QLatin1String("this may take")) ||
-                    ll.contains(QLatin1String("to get your forwarded port")) ||
-                    ll.contains(QLatin1String("natpmpc")) ||
-                    (ll.startsWith(QLatin1String("guide:")) && ll.contains(QLatin1String("http")));
-            }).begin(), lines.end());
+            QStringList lines = CliNoise::strip(out.split(QLatin1Char('\n')));
 
             while (lines.isEmpty() == false && lines.first().trimmed().isEmpty())
             {
@@ -553,7 +720,7 @@ void VpnManager::fetchCities(const QString& countryCode)
                [this, countryCode](int exitCode, const QString& out, const QString& err)
                {
                    if (exitCode != 0)
-                       return; // not authenticated or other error — don't overwrite with an empty list
+                       return; // not authenticated or other error - don't overwrite with an empty list
                    const QString combined = out + QLatin1Char('\n') + err;
                    QList<QPair<QString, QString>> cities;
                    const QStringList lines = combined.split(QLatin1Char('\n'));
@@ -633,8 +800,12 @@ void VpnManager::fetchInfo()
 void VpnManager::fetchAccountType()
 {
     runCommand({QStringLiteral("config"), QStringLiteral("list")},
-               [this](int, const QString& out, const QString& err)
+               [this](int exitCode, const QString& out, const QString& err)
     {
+        // Nothing to classify: keep the current account type rather than
+        // falling through to the Plus default below.
+        if (exitCode == CLI_EXIT_FAILED_TO_START) return;
+
         const QString combined = out + QLatin1Char('\n') + err;
         const AccountType type =
             combined.contains(QStringLiteral("To upgrade to VPN Plus"), Qt::CaseInsensitive)

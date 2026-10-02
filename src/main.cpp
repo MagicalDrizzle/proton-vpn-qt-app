@@ -11,6 +11,7 @@
 #include <QStandardPaths>
 #include <QStyleFactory>
 #include <QSysInfo>
+#include <QSystemTrayIcon>
 #include <QTranslator>
 #include "appConfig.h"
 #include "cli/appImageUtils.h"
@@ -162,12 +163,19 @@ int main(int argc, char* argv[])
         DBG_APP(QStringLiteral("D-Bus: cannot connect to session bus - VPN status will not be exposed"));
     }
 
-    if (AppConfig::instance().startHidden())
+    // Starting hidden is only safe when a tray icon exists to restore the
+    // window from; otherwise the app would be running with no way to reach it.
+    if (AppConfig::instance().startHidden() && QSystemTrayIcon::isSystemTrayAvailable())
     {
         w.hide();
     }
     else
     {
+        if (AppConfig::instance().startHidden())
+        {
+            DBG_APP(QStringLiteral("start_hidden is set but no system tray is available - "
+                                   "showing the window instead."));
+        }
         w.show();
     }
     return QApplication::exec();

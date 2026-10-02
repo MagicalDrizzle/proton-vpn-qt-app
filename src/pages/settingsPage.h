@@ -4,9 +4,11 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QTimer>
 #include <functional>
+#include <utility>
 #include "../vpnManager.h"
 #include "../cli/natpmpManager.h"
 #include "../dialogs/aboutDialog.h"
@@ -130,6 +132,13 @@ private:
     // The VPN tab widget – watched via eventFilter to keep m_refreshBtn
     // positioned as a floating overlay in its top-right corner.
     QWidget* m_vpnTabWidget = nullptr;
+
+    // Tab builders - one per QTabWidget page, called from the constructor.
+    void buildAppTab(QTabWidget* tabs);
+    void buildAppearanceTab(QTabWidget* tabs);
+    void buildVpnTab(QTabWidget* tabs);
+    // Scroll area + "infoCard" container shared by the tabs.
+    static std::pair<QWidget*, QVBoxLayout*> makeTabCard(QWidget* tabPage);
 
     // Helpers
     QWidget* makeToggleRow(QWidget* parent, const QString& label, const QString& desc,

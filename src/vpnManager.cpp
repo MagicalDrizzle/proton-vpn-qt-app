@@ -198,8 +198,47 @@ void VpnManager::stopStatusMonitor()
 // Only emits signals when state or connected server actually changed.
 // ---------------------------------------------------------------------------
 
+// static
+QString VpnManager::stateToString(const VpnState state)
+{
+    switch (state)
+    {
+        case VpnState::Connected:
+            return QStringLiteral("Connected");
+
+        case VpnState::Disconnected:
+            return QStringLiteral("Disconnected");
+
+        case VpnState::Connecting:
+            return QStringLiteral("Connecting");
+
+        case VpnState::Disconnecting:
+            return QStringLiteral("Disconnecting");
+
+        case VpnState::Error:
+            return QStringLiteral("Error");
+
+        default:
+            return QStringLiteral("Unknown");
+    }
+}
+
+
 void VpnManager::applyStatusFields(const QMap<QString, QString>& fields)
 {
+    // A snapshot with no "status" field is not a disconnect - it is a snapshot
+    // we could not read (empty output, a CLI traceback, a hung invocation).
+    // Treating it as Disconnected would tear down a live session in the UI:
+    // stop the elapsed timer, stop the port-forwarding keep-alive, fire a
+    // spurious desktop notification, and potentially trigger auto-connect.
+    // Ignore it and keep the last known state until a readable poll arrives.
+    if (fields.contains(QStringLiteral("status")) == false)
+    {
+        DBG_POLL(QStringLiteral("Snapshot had no status field - ignoring "
+                                "(keeping state: %1).").arg(stateToString(m_state)));
+        return;
+    }
+
     const QString statusVal = fields.value(QStringLiteral("status")).toLower();
     const VpnState newState = (statusVal == QStringLiteral("connected"))
                               ? VpnState::Connected
@@ -263,23 +302,6 @@ void VpnManager::applyStatusFields(const QMap<QString, QString>& fields)
         m_connectedServer = server;
     }
 
-    auto stateToStr = [](const VpnState s) -> QString
-    {
-        switch (s)
-        {
-            case VpnState::Connected:
-                return QStringLiteral("Connected");
-            case VpnState::Disconnected:
-                return QStringLiteral("Disconnected");
-            case VpnState::Connecting:
-                return QStringLiteral("Connecting");
-            case VpnState::Disconnecting:
-                return QStringLiteral("Disconnecting");
-            default:
-                return QStringLiteral("Error");
-        }
-    };
-
     const bool dbgStateChanged  = newState != prevState;
     const bool dbgServerChanged = dbgStateChanged == false &&
                                   newState == VpnState::Connected &&
@@ -288,7 +310,7 @@ void VpnManager::applyStatusFields(const QMap<QString, QString>& fields)
     if (dbgStateChanged)
     {
         DBG_POLL(QStringLiteral("State changed:  %1 → %2")
-                     .arg(stateToStr(prevState), stateToStr(newState)));
+                     .arg(stateToString(prevState), stateToString(newState)));
     }
     else if (dbgServerChanged)
     {

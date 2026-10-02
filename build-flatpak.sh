@@ -72,7 +72,7 @@ for component in "${RUNTIME}/${RUNTIME_VERSION}" "${RUNTIME%Platform}Sdk/${RUNTI
     if ! flatpak info --user "$ref" >/dev/null 2>&1; then
         info "Installing $ref from flathub..."
         flatpak install --user --noninteractive flathub "$ref" || \
-            warn "Could not auto-install $ref — you may need to run: flatpak install flathub $ref"
+            warn "Could not auto-install $ref; you may need to run: flatpak install flathub $ref"
     fi
 done
 

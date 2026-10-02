@@ -2,6 +2,7 @@
 
 #include <QObject>
 
+class QProcess;
 class QTimer;
 
 // Manages the natpmpc keep-alive loop required by ProtonVPN port forwarding.
@@ -31,7 +32,7 @@ public:
     // (it will be a no-op in that case).
     void refresh();
 
-    // Stop the loop and reset internal state.
+    // Stop the loop, kill any request still in flight, and reset internal state.
     void stop();
 
     bool isRunning()     const { return m_timer != nullptr; }
@@ -50,8 +51,9 @@ signals:
 private:
     void run(); // single natpmpc invocation
 
-    QTimer* m_timer         = nullptr;
-    bool    m_active        = false;  // true while a process is in flight
-    int     m_forwardedPort = 0;
+    QTimer*   m_timer         = nullptr;
+    QProcess* m_process       = nullptr; // the request currently in flight, if any
+    bool      m_active        = false;   // true while a process is in flight
+    int       m_forwardedPort = 0;
 };
 

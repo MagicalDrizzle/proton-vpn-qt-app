@@ -2,15 +2,15 @@
 #include <QButtonGroup>
 #include <QFile>
 #include <QFrame>
+#include <QGuiApplication>
+#include <QStyleHints>
 // ReSharper disable once CppUnusedIncludeDirective
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QPainter>
 #include <QPixmap>
-#include <QSvgRenderer>
 #include <QSvgWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -25,7 +25,9 @@
 #include "dialogs/whatsNewDialog.h"
 #include "geoUtils.h"
 #include "mainWindow.h"
+#include "themeManager.h"
 #include "pages/accountPage.h"
+#include "pages/cliNotRespondingPage.h"
 #include "pages/countriesPage.h"
 #include "pages/loginPage.h"
 #include "pages/notInstalledPage.h"
@@ -86,24 +88,16 @@ constexpr int WHATS_NEW_DELAY_MS = 400;
 // should be rendered with their own SVG colors unchanged.
 QIcon svgNavIcon(const QString& path, const QSize& size = {NAV_ICON_SIZE, NAV_ICON_SIZE}, bool tintForTheme = true)
 {
-    QPixmap pix(size);
-    pix.fill(Qt::transparent);
-    QPainter p(&pix);
-    QSvgRenderer renderer(path);
-    renderer.render(&p);
-
-    if (tintForTheme)
+    if (tintForTheme == false)
     {
-        const QColor windowColor = QApplication::palette().color(QPalette::Window);
-        const QColor tintColor = (windowColor.lightness() < DARK_THEME_LIGHTNESS_THRESHOLD)
-                                     ? Qt::white
-                                     : QColor(DARK_BG_R, DARK_BG_G, DARK_BG_B);
-        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        p.fillRect(pix.rect(), tintColor);
+        return QIcon(GeoUtils::svgPixmap(path, size.width(), size.height()));
     }
 
-    p.end();
-    return QIcon(pix);
+    const QColor windowColor = QApplication::palette().color(QPalette::Window);
+    const QColor tintColor = (windowColor.lightness() < DARK_THEME_LIGHTNESS_THRESHOLD)
+                                 ? QColor(Qt::white)
+                                 : QColor(DARK_BG_R, DARK_BG_G, DARK_BG_B);
+    return QIcon(GeoUtils::svgPixmap(path, size.width(), size.height(), tintColor));
 }
 } // namespace
 
@@ -154,6 +148,11 @@ MainWindow::MainWindow(QWidget* parent)
     // Not installed page (index 1)
     m_notInstalledPage = new NotInstalledPage();
     m_stack->addWidget(m_notInstalledPage); // index 1
+    connect(m_notInstalledPage, &NotInstalledPage::recheckRequested, this, [this]()
+    {
+        showPage(Page::Loading);
+        m_manager->checkInstalled();
+    });
 
     // Login page (index 2)
     m_loginPage = new LoginPage();
@@ -254,10 +253,23 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_settingsPage, &SettingsPage::favoritesCleared,
             m_vpnPage, &VpnPage::refreshFavoritesPicker);
 
+    // CLI not responding page (index 7)
+    m_cliNotRespondingPage = new CliNotRespondingPage();
+    m_stack->addWidget(m_cliNotRespondingPage); // index 7
+    connect(m_cliNotRespondingPage, &CliNotRespondingPage::retryRequested, this, [this]()
+    {
+        showPage(Page::Loading);
+        m_manager->checkLoginStatus();
+    });
+
 #ifdef QT_DEBUG
-    // Debug page (index 7) – only present in debug builds
+    // Debug page (index 8) – only present in debug builds
     m_debugPage = new DebugPage();
-    m_stack->addWidget(m_debugPage); // index 7
+    m_stack->addWidget(m_debugPage); // index 8
+    connect(m_debugPage, &DebugPage::notInstalledPageRequested,
+            this, &MainWindow::showNotInstalled);
+    connect(m_debugPage, &DebugPage::cliNotRespondingPageRequested,
+            this, &MainWindow::showCliNotResponding);
 
     // Floating debug button shown at bottom-left during login (sidebar is hidden then)
     m_loginDebugBtn = new QToolButton(this);
@@ -287,8 +299,7 @@ MainWindow::MainWindow(QWidget* parent)
     {
         if (installed == false)
         {
-            m_sidebar->setEnabled(false);
-            showPage(Page::NotInstalled);
+            showNotInstalled();
         }
         else
         {
@@ -318,6 +329,8 @@ MainWindow::MainWindow(QWidget* parent)
         // Delay slightly so the page transition is visible before the dialog pops.
         QTimer::singleShot(WHATS_NEW_DELAY_MS, this, &MainWindow::maybeShowWhatsNew);
     });
+
+    connect(m_manager, &VpnManager::loginCheckTimedOut, this, &MainWindow::showCliNotResponding);
 
     connect(m_manager, &VpnManager::twoFactorRequired, this, [this]()
     {
@@ -406,64 +419,75 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             });
 
-    // System tray icon
-    m_trayIcon = new QSystemTrayIcon(this);
-    auto* trayMenu = new QMenu(this);
-    trayMenu->addAction(tr("Show"), this, [this]()
+    // System tray icon.  Only created when the desktop actually provides a
+    // tray: without this check, "Start Hidden" on a tray-less desktop launches
+    // the app with no window and no icon, and the single-instance lock then
+    // blocks a second launch.  Every m_trayIcon use is null-guarded.
+    if (QSystemTrayIcon::isSystemTrayAvailable())
     {
-        showNormal();
-        raise();
-        activateWindow();
-    });
-    trayMenu->addSeparator();
-    m_trayConnectAction = trayMenu->addAction(tr("Connect"), this, [this]()
-    {
-        const VpnState state = m_manager->currentState();
-        if (state == VpnState::Connected)
+        m_trayIcon = new QSystemTrayIcon(this);
+        auto* trayMenu = new QMenu(this);
+        trayMenu->addAction(tr("Show"), this, [this]()
         {
-            m_manager->disconnectVpn();
-        }
-        else if (state == VpnState::Disconnected || state == VpnState::Error)
+            showNormal();
+            raise();
+            activateWindow();
+        });
+        trayMenu->addSeparator();
+        m_trayConnectAction = trayMenu->addAction(tr("Connect"), this, [this]()
         {
-            m_manager->connectVpn();
-        }
-    });
-    trayMenu->addSeparator();
-    trayMenu->addAction(tr("Quit"), this, [this]()
-    {
-        // Only prompt when the VPN is active
-        if (m_manager->currentState() != VpnState::Connected &&
-            m_manager->currentState() != VpnState::Connecting)
-        {
-            QApplication::quit();
-            return;
-        }
-
-        QuitDialog dlg(m_vpnPage->isPortForwardingActive(), this);
-        const int result = dlg.exec();
-        if (result == QDialog::Rejected)
-            return; // user canceled - do nothing
-
-        if (result == QuitDialog::DisconnectResult)
-        {
-            m_manager->disconnectVpnSync(); // blocks until protonvpn disconnect finishes
-        }
-
-        QApplication::quit();
-    });
-    m_trayIcon->setContextMenu(trayMenu);
-    connect(m_trayIcon, &QSystemTrayIcon::activated, this,
-            [this](const QSystemTrayIcon::ActivationReason reason)
+            const VpnState state = m_manager->currentState();
+            if (state == VpnState::Connected)
             {
-                if (reason == QSystemTrayIcon::Trigger)
+                m_manager->disconnectVpn();
+            }
+            else if (state == VpnState::Disconnected || state == VpnState::Error)
+            {
+                m_manager->connectVpn();
+            }
+        });
+        trayMenu->addSeparator();
+        trayMenu->addAction(tr("Quit"), this, [this]()
+        {
+            if (confirmQuit() == false) return;
+            QApplication::quit();
+        });
+        m_trayIcon->setContextMenu(trayMenu);
+        connect(m_trayIcon, &QSystemTrayIcon::activated, this,
+                [this](const QSystemTrayIcon::ActivationReason reason)
                 {
-                    showNormal();
-                    raise();
-                    activateWindow();
-                }
+                    if (reason == QSystemTrayIcon::Trigger)
+                    {
+                        showNormal();
+                        raise();
+                        activateWindow();
+                    }
+                });
+        updateTrayIcon(VpnState::Unknown);
+        m_trayIcon->show();
+    }
+    else
+    {
+        DBG_APP(QStringLiteral("No system tray available - running without a tray icon."));
+    }
+
+    // Follow the desktop's light/dark switch while the theme setting is
+    // "System".  The palette-driven parts of the UI (icons, logo, spinner)
+    // already repaint on their own via QEvent::PaletteChange, but the app
+    // stylesheet is only chosen inside ThemeManager::apply(), so without this
+    // the QSS-driven surfaces - cards, popups, the login card - kept whichever
+    // theme was current at launch.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
+            this, [](Qt::ColorScheme)
+            {
+                if (AppConfig::instance().theme() != AppConfig::Theme::System)
+                    return; // the user pinned a theme - the desktop does not override it
+
+                DBG_APP(QStringLiteral("System color scheme changed - reapplying theme."));
+                ThemeManager::apply(AppConfig::Theme::System);
             });
-    updateTrayIcon(VpnState::Unknown);
-    m_trayIcon->show();
+#endif
 
     // Start
     showPage(Page::Loading);
@@ -559,8 +583,8 @@ void MainWindow::showPage(Page page)
     const bool onLoginPage = (page == Page::Login);
 #endif
 
-    m_sidebar->setVisible(!onLoginPage);
-    m_sidebarDivider->setVisible(!onLoginPage);
+    m_sidebar->setVisible(onLoginPage == false);
+    m_sidebarDivider->setVisible(onLoginPage == false);
 
     m_stack->setCurrentIndex(std::to_underlying(page));
 
@@ -596,6 +620,20 @@ void MainWindow::showPage(Page page)
     const bool debugFromLogin = (page == Page::Debug && m_preDebugPage == Page::Login);
     m_debugPage->setLeftPadding(debugFromLogin ? (SIDEBAR_MARGIN + NAV_BTN_SIZE + SIDEBAR_MARGIN) : 0);
 #endif
+}
+
+void MainWindow::showNotInstalled()
+{
+    m_sidebar->setEnabled(false);
+    showPage(Page::NotInstalled);
+}
+
+void MainWindow::showCliNotResponding()
+{
+    // Navigation stays locked until the retry's login check succeeds, the
+    // same as on the other pages shown before startup completes.
+    m_sidebar->setEnabled(false);
+    showPage(Page::CliNotResponding);
 }
 
 #ifdef QT_DEBUG
@@ -710,16 +748,44 @@ void MainWindow::changeEvent(QEvent* event)
     }
 }
 
-// Closing the window (the titlebar X) hides to the tray instead of quitting,
-// matching the tray icon's "Quit" action being the only path that actually
-// exits. Falls back to a real close if no tray is available to hide to,
-// since hiding with no way to bring the window back would strand the user.
+// Asks the user what to do when quitting with an active VPN connection.
+// Returns true when the caller should go ahead and quit.  Shared by the tray's
+// Quit action and by closeEvent() on desktops with no tray, where closing the
+// window really does exit the app.
+bool MainWindow::confirmQuit()
+{
+    const VpnState state = m_manager->currentState();
+    if (state != VpnState::Connected && state != VpnState::Connecting)
+        return true;
+
+    QuitDialog dlg(m_vpnPage->isPortForwardingActive(), this);
+    const int result = dlg.exec();
+    if (result == QDialog::Rejected) return false;
+
+    if (result == QuitDialog::DisconnectResult)
+    {
+        VpnManager::disconnectVpnSync(); // blocks until protonvpn disconnect finishes
+    }
+    return true;
+}
+
+// Closing the window (the titlebar X) hides to the tray when "Close to Tray"
+// is on (the default), leaving the tray icon's "Quit" action as the way out.
+// With the setting off - or on a desktop with no tray to hide to, where
+// hiding would strand the user - the close really does quit, so it gets the
+// same confirmation the tray's Quit action shows.
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    if (QSystemTrayIcon::isSystemTrayAvailable())
+    if (m_trayIcon != nullptr && AppConfig::instance().closeToTray() == true)
     {
         event->ignore();
         hide();
+        return;
+    }
+
+    if (confirmQuit() == false)
+    {
+        event->ignore();
         return;
     }
     QWidget::closeEvent(event);
@@ -757,113 +823,128 @@ void MainWindow::sendNotification(const QString& title, const QString& message) 
 {
     if (AppConfig::instance().notifications() == false)
         return;
+    if (m_trayIcon == nullptr)
+        return; // notifications are delivered through the tray icon
 
     // Render the ProtonVPN sign SVG into a pixmap to use as the notification icon.
-    QPixmap iconPix(NOTIFICATION_ICON_SIZE, NOTIFICATION_ICON_SIZE);
-    iconPix.fill(Qt::transparent);
-    QPainter p(&iconPix);
-    QSvgRenderer renderer(QStringLiteral(":/assets/proton-vpn-sign.svg"));
-    renderer.render(&p);
-    p.end();
+    const QPixmap iconPix = GeoUtils::svgPixmap(QStringLiteral(":/assets/proton-vpn-sign.svg"),
+                                                NOTIFICATION_ICON_SIZE);
 
     m_trayIcon->showMessage(title, message, QIcon(iconPix), NOTIFICATION_DURATION_MS);
 }
 
 void MainWindow::updateTrayIcon(VpnState state)
-{    // Choose asset based on state
+{
+    // Choose asset based on state
     QString asset;
     switch (state)
     {
-    case VpnState::Connected:
-        asset = QStringLiteral(":/assets/state-connected.svg");
-        break;
-    case VpnState::Connecting:
-    case VpnState::Disconnecting:
-        asset = QStringLiteral(":/assets/state-connecting.svg");
-        break;
-    case VpnState::Error:
-        asset = QStringLiteral(":/assets/state-error.svg");
-        break;
-    default:
-        asset = QStringLiteral(":/assets/state-disconnected.svg");
-        break;
+        case VpnState::Connected:
+            asset = QStringLiteral(":/assets/state-connected.svg");
+            break;
+
+        case VpnState::Connecting:
+        case VpnState::Disconnecting:
+            asset = QStringLiteral(":/assets/state-connecting.svg");
+            break;
+
+        case VpnState::Error:
+            asset = QStringLiteral(":/assets/state-error.svg");
+            break;
+
+        default:
+            asset = QStringLiteral(":/assets/state-disconnected.svg");
+            break;
     }
 
-    // Render into a pixmap (use a larger size for the window icon, smaller for tray)
-    auto makeIcon = [&](const int sz)
+    if (m_trayIcon != nullptr)
     {
-        QPixmap pix(sz, sz);
-        pix.fill(Qt::transparent);
-        QPainter p(&pix);
-        QSvgRenderer renderer(asset);
-        renderer.render(&p);
-        return QIcon(pix);
-    };
+        m_trayIcon->setIcon(QIcon(GeoUtils::svgPixmap(asset, TRAY_ICON_SIZE)));
+        updateTrayTooltipAndAction(state);
+    }
 
-    m_trayIcon->setIcon(makeIcon(TRAY_ICON_SIZE));
+    notifyStateTransition(state);
+}
 
+// Keeps the tray tooltip and the Connect/Disconnect action in step with the
+// current state.  Only called when a tray icon exists.
+void MainWindow::updateTrayTooltipAndAction(const VpnState state) const
+{
     switch (state)
     {
-    case VpnState::Connected:
-        m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Connected"));
-        m_trayConnectAction->setText(tr("Disconnect"));
-        m_trayConnectAction->setEnabled(true);
-        break;
-    case VpnState::Connecting:
-        m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Connecting\u2026"));
-        m_trayConnectAction->setText(tr("Connecting\u2026"));
-        m_trayConnectAction->setEnabled(false);
-        break;
-    case VpnState::Disconnecting:
-        m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Disconnecting\u2026"));
-        m_trayConnectAction->setText(tr("Disconnecting\u2026"));
-        m_trayConnectAction->setEnabled(false);
-        break;
-    case VpnState::Error:
-        m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Error"));
-        m_trayConnectAction->setText(tr("Connect"));
-        m_trayConnectAction->setEnabled(true);
-        break;
-    case VpnState::Disconnected:
-        m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Disconnected"));
-        m_trayConnectAction->setText(tr("Connect"));
-        m_trayConnectAction->setEnabled(true);
-        break;
-    default: // Unknown - still checking
-        m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Checking\u2026"));
-        m_trayConnectAction->setText(tr("Connect"));
-        m_trayConnectAction->setEnabled(false);
-        break;
-    }
+        case VpnState::Connected:
+            m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Connected"));
+            m_trayConnectAction->setText(tr("Disconnect"));
+            m_trayConnectAction->setEnabled(true);
+            break;
 
-    // Send a desktop notification on meaningful state transitions (avoid re-notifying same state)
+        case VpnState::Connecting:
+            m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Connecting\u2026"));
+            m_trayConnectAction->setText(tr("Connecting\u2026"));
+            m_trayConnectAction->setEnabled(false);
+            break;
+
+        case VpnState::Disconnecting:
+            m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Disconnecting\u2026"));
+            m_trayConnectAction->setText(tr("Disconnecting\u2026"));
+            m_trayConnectAction->setEnabled(false);
+            break;
+
+        case VpnState::Error:
+            m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Error"));
+            m_trayConnectAction->setText(tr("Connect"));
+            m_trayConnectAction->setEnabled(true);
+            break;
+
+        case VpnState::Disconnected:
+            m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Disconnected"));
+            m_trayConnectAction->setText(tr("Connect"));
+            m_trayConnectAction->setEnabled(true);
+            break;
+
+        default: // Unknown - still checking
+            m_trayIcon->setToolTip(tr("ProtonVPN \u2013 Checking\u2026"));
+            m_trayConnectAction->setText(tr("Connect"));
+            m_trayConnectAction->setEnabled(false);
+            break;
+    }
+}
+
+// Sends a desktop notification on meaningful state transitions, skipping
+// repeats of a state that was already announced.
+void MainWindow::notifyStateTransition(const VpnState state)
+{
     if (state != m_lastNotifiedState)
     {
         switch (state)
         {
-        case VpnState::Connecting:
-            sendNotification(tr("ProtonVPN \u2013 Connecting"),
-                             tr("Establishing a secure VPN connection\u2026"));
-            break;
-        case VpnState::Disconnecting:
-            sendNotification(tr("ProtonVPN \u2013 Disconnecting"),
-                             tr("Closing the VPN connection\u2026"));
-            break;
-        case VpnState::Connected:
-            sendNotification(tr("ProtonVPN \u2013 Connected"),
-                             tr("You are now protected by ProtonVPN."));
-            break;
-        case VpnState::Disconnected:
-            // Only notify on disconnect if we were previously connected/connecting
-            if (m_lastNotifiedState == VpnState::Connected ||
-                m_lastNotifiedState == VpnState::Disconnecting)
-            {
-                sendNotification(tr("ProtonVPN \u2013 Disconnected"),
-                                 tr("The VPN connection has been closed."));
-            }
-            break;
-        default:
-            break;
+            case VpnState::Connecting:
+                sendNotification(tr("ProtonVPN \u2013 Connecting"),
+                                 tr("Establishing a secure VPN connection\u2026"));
+                break;
+
+            case VpnState::Disconnecting:
+                sendNotification(tr("ProtonVPN \u2013 Disconnecting"),
+                                 tr("Closing the VPN connection\u2026"));
+                break;
+
+            case VpnState::Connected:
+                sendNotification(tr("ProtonVPN \u2013 Connected"),
+                                 tr("You are now protected by ProtonVPN."));
+                break;
+
+            case VpnState::Disconnected:
+                // Only notify on disconnect if we were previously connected/connecting
+                if (m_lastNotifiedState == VpnState::Connected ||
+                    m_lastNotifiedState == VpnState::Disconnecting)
+                {
+                    sendNotification(tr("ProtonVPN \u2013 Disconnected"),
+                                     tr("The VPN connection has been closed."));
+                }
+                break;
+
+            default:
+                break;
         }
         m_lastNotifiedState = state;
     }

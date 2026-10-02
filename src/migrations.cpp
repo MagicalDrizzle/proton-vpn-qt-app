@@ -1,8 +1,7 @@
 #include "migrations.h"
-#include "cli/flatpakUtils.h"
+#include "cli/platformUtils.h"
 #include "debug.h"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -42,7 +41,7 @@ void migrateSystemdToXdgAutostart(const QString& previousVersion)
     const QString serviceFile = configDir + QStringLiteral("/systemd/user/proton-vpn-qt.service");
 
     // If the service file does not exist, auto-start was not enabled under the
-    // old version — remove nothing, create nothing.
+    // old version, so remove nothing, create nothing.
     if (QFileInfo::exists(serviceFile) == false)
         return;
 
@@ -68,10 +67,7 @@ void migrateSystemdToXdgAutostart(const QString& previousVersion)
     templateFile.close();
 
     // Substitute the executable path placeholder.
-    const QString exec = isRunningAsFlatpak()
-        ? QStringLiteral("flatpak run ") + QString::fromUtf8(qgetenv("FLATPAK_ID"))
-        : QCoreApplication::applicationFilePath();
-    content.replace(QStringLiteral("@EXEC@"), exec);
+    content.replace(QStringLiteral("@EXEC@"), PlatformUtils::autostartExecCommand());
 
     // Write the XDG autostart entry.
     const QString autostartDir = configDir + QStringLiteral("/autostart");

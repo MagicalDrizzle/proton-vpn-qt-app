@@ -496,7 +496,7 @@ QFrame#drawerNotch:hover {
     background-color: #d0d0e8;
 }
 
-/*  Tabs (Settings page) — Fusion has no built-in Breeze-like tab rendering,
+/*  Tabs (Settings page): Fusion has no built-in Breeze-like tab rendering,
     so this is defined explicitly rather than left to the active QStyle. */
 QTabWidget::pane {
     background-color: #f0f0f5;
@@ -583,3 +583,37 @@ QComboBox::down-arrow:disabled {
     opacity: 0.3;
 }
 
+/*  ==========================================================================
+    Colors that used to live in inline setStyleSheet() calls in C++.
+    Same rules as style.qss, retuned for contrast against a light background.
+    ========================================================================== */
+
+/*  VPN status label - color follows the "vpnState" dynamic property  */
+QLabel#vpnStatusLabel {
+    font-size: 16pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #5a5a7a;
+}
+QLabel#vpnStatusLabel[vpnState="connected"]     { color: #14794a; }
+QLabel#vpnStatusLabel[vpnState="disconnected"]  { color: #6b6b7b; }
+QLabel#vpnStatusLabel[vpnState="transitioning"] { color: #a8690a; }
+QLabel#vpnStatusLabel[vpnState="error"]         { color: #b3302f; }
+
+/*  Secondary description text under a setting name  */
+QLabel#settingsDesc                  { color: #6a6a78; }
+QLabel#settingsDesc[disabled="true"] { color: #a8a8b4; }
+QLabel#infoKey[disabled="true"]      { color: #9a9aa6; }
+
+/*  Accent rows: "Fastest server" entries and picker actions  */
+QLabel#locationPickerItemLabel[fastest="true"] { color: #6d4aff; }
+QLabel#cityLabel[fastest="true"] { color: #6d4aff; background-color: transparent; }
+QLabel#locationPickerItemLabel[action="true"] { color: #6a6a78; }
+
+/*  Location picker dimmed for free accounts (no location choice)  */
+QLabel#locationPickerTop[dimmed="true"],
+QLabel#locationPickerBottom[dimmed="true"] { color: #a0a0b0; }
+
+/*  Account plan value  */
+QLabel#infoValue[plan="free"] { color: #6a6a78; font-weight: normal; }
+QLabel#infoValue[plan="plus"] { color: #6d4aff; font-weight: bold; }

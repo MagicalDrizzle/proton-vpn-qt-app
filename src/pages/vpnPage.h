@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <QElapsedTimer>
 #include <QPushButton>
 #include <QTimer>
 #include <QPropertyAnimation>
@@ -37,13 +38,18 @@ signals:
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+    void keyPressEvent(QKeyEvent*) override;
     void enterEvent(QEnterEvent*) override;
     void leaveEvent(QEvent*) override;
+    void focusInEvent(QFocusEvent*) override;
+    void focusOutEvent(QFocusEvent*) override;
 
 private:
     RingState m_state = RingState::Unknown;
     qreal m_spinAngle = 0.0;
     bool m_hovered = false;
+    bool m_pressed = false;
     QPropertyAnimation* m_anim = nullptr;
     void startSpin() const;
     void stopSpin();
@@ -61,6 +67,9 @@ public:
     void populate(const QList<QPair<QString, QString>>& cities);
     void setLoading(bool loading);
     void setSelectedCity(const QString& city);
+    // setSelectedCity() plus the selectionChanged() notification. Use this
+    // instead of emitting the signal from outside the class.
+    void selectCity(const QString& city);
     // Tries to select city in the populated list.
     // Returns true if found; false if not found (falls back to "Active connection").
     bool trySelectCity(const QString& city);
@@ -227,7 +236,9 @@ private:
     AppImageBetaBanner* m_appImageBetaBanner = nullptr;
     QTimer*         m_elapsedTimer;
     QTimer*         m_checkingSpinnerTimer;
-    int   m_elapsedSeconds = 0;
+    // Monotonic reference for the connection duration display; the label is
+    // recomputed from this on every tick rather than incrementing a counter.
+    QElapsedTimer   m_connectedSince;
     int   m_checkingSpinnerFrame = 0;
     QString m_rawError;
 
@@ -251,10 +262,15 @@ private:
 
     // kWideThreshold removed; threshold is now computed dynamically in relayoutPickers()
 
+    // Constructor helpers - each builds one self-contained part of the page.
+    void buildPortRow(QWidget* parent, QVBoxLayout* layout);
+    void buildBannerArea(QVBoxLayout* scrollLayout);
+    void buildDrawer();
+
     void updateUi(VpnState state, const QString& info);
     void startElapsedTimer();
     void stopElapsedTimer() const;
-    void showErrorDetails() const;
+    void showErrorDetails();
     void relayoutPickers(int width = 0) const; // delegates to drawer syncVisibility
     void applyWideMode(bool wide);
     void repositionDrawer();

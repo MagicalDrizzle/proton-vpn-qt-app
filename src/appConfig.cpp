@@ -1,4 +1,3 @@
-#include <QDir>
 #include <QFile>
 // ReSharper disable once CppUnusedIncludeDirective
 #include <QJsonDocument> // Ignore unused include warning; we do use QJsonDocument
@@ -7,6 +6,7 @@
 #include "appConfig.h"
 #include "debug.h"
 #include "fileLogger.h"
+#include "jsonFile.h"
 
 namespace
 {
@@ -23,6 +23,22 @@ QString configFile() { return configDir() + QStringLiteral("/app.json"); }
 
 constexpr int DEFAULT_RECENT_CONNECTIONS_COUNT = 5;
 } // namespace
+
+// static
+QString AppConfig::themeName(const Theme theme)
+{
+    switch (theme)
+    {
+        case Theme::Dark:
+            return QStringLiteral("dark");
+
+        case Theme::Light:
+            return QStringLiteral("light");
+
+        default:
+            return QStringLiteral("system");
+    }
+}
 
 AppConfig& AppConfig::instance()
 {
@@ -47,8 +63,12 @@ void AppConfig::load()
     m_autoConnect = obj.value(QStringLiteral("auto_connect")).toBool(false);
     m_autoConnectServer = obj.value(QStringLiteral("auto_connect_server")).toString();
     m_notifications = obj.value(QStringLiteral("notifications")).toBool(true);
-    m_recentConnectionsCount = obj.value(QStringLiteral("recent_connections_count")).toInt(DEFAULT_RECENT_CONNECTIONS_COUNT);
+    // Clamped on read as well as on write: the file is user-editable, and a
+    // negative count would make entries() slice with a negative length.
+    m_recentConnectionsCount = qMax(0,
+        obj.value(QStringLiteral("recent_connections_count")).toInt(DEFAULT_RECENT_CONNECTIONS_COUNT));
     m_startHidden = obj.value(QStringLiteral("start_hidden")).toBool(false);
+    m_closeToTray = obj.value(QStringLiteral("close_to_tray")).toBool(true);
     m_showLocationPicker = obj.value(QStringLiteral("show_location_picker")).toBool(true);
     m_showFavoritesDropdown = obj.value(QStringLiteral("show_favorites_dropdown")).toBool(true);
     m_favoritesEnabled = obj.value(QStringLiteral("favorites_enabled")).toBool(true);
@@ -73,43 +93,24 @@ void AppConfig::load()
 
 void AppConfig::logLoadedConfig() const
 {
-    QString themeStr;
-    switch (m_theme)
-    {
-        case Theme::Dark:
-            themeStr = QStringLiteral("dark");
-            break;
-
-        case Theme::Light:
-            themeStr = QStringLiteral("light");
-            break;
-
-        default:
-            themeStr = QStringLiteral("system");
-            break;
-    }
-
     DBG_SETTINGS(QStringLiteral("Config loaded from: ") + configFile());
     DBG_SETTINGS(QStringLiteral("  auto_connect             = ") + (m_autoConnect ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  auto_connect_server      = ") + m_autoConnectServer);
     DBG_SETTINGS(QStringLiteral("  notifications            = ") + (m_notifications ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  recent_connections_count = ") + QString::number(m_recentConnectionsCount));
     DBG_SETTINGS(QStringLiteral("  start_hidden             = ") + (m_startHidden ? QStringLiteral("true") : QStringLiteral("false")));
+    DBG_SETTINGS(QStringLiteral("  close_to_tray            = ") + (m_closeToTray ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  show_location_picker     = ") + (m_showLocationPicker ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  show_favorites_dropdown  = ") + (m_showFavoritesDropdown ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  favorites_enabled        = ") + (m_favoritesEnabled ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  last_seen_version        = ") + m_lastSeenVersion);
     DBG_SETTINGS(QStringLiteral("  check_for_updates        = ") + (m_checkForUpdates ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  log_to_file              = ") + (m_logToFile ? QStringLiteral("true") : QStringLiteral("false")));
-    DBG_SETTINGS(QStringLiteral("  theme                    = ") + themeStr);
+    DBG_SETTINGS(QStringLiteral("  theme                    = ") + themeName(m_theme));
 }
 
 bool AppConfig::save() const
 {
-    const QDir dir;
-    if (dir.mkpath(configDir()) == false)
-        return false;
-
     QJsonObject obj;
     obj[QStringLiteral("auto_connect")] = m_autoConnect;
     if (m_autoConnectServer.isEmpty() == false)
@@ -119,6 +120,7 @@ bool AppConfig::save() const
     obj[QStringLiteral("notifications")] = m_notifications;
     obj[QStringLiteral("recent_connections_count")] = m_recentConnectionsCount;
     obj[QStringLiteral("start_hidden")] = m_startHidden;
+    obj[QStringLiteral("close_to_tray")] = m_closeToTray;
     obj[QStringLiteral("show_location_picker")] = m_showLocationPicker;
     obj[QStringLiteral("show_favorites_dropdown")] = m_showFavoritesDropdown;
     obj[QStringLiteral("favorites_enabled")] = m_favoritesEnabled;
@@ -129,27 +131,9 @@ bool AppConfig::save() const
     obj[QStringLiteral("check_for_updates")] = m_checkForUpdates;
     obj[QStringLiteral("log_to_file")] = m_logToFile;
 
-    QString themeStr;
-    switch (m_theme)
-    {
-    case Theme::Dark:
-        themeStr = QStringLiteral("dark");
-        break;
-    case Theme::Light:
-        themeStr = QStringLiteral("light");
-        break;
-    default:
-        themeStr = QStringLiteral("system");
-        break;
-    }
-    obj[QStringLiteral("theme")] = themeStr;
+    obj[QStringLiteral("theme")] = themeName(m_theme);
 
-    QFile f(configFile());
-    if (f.open(QIODevice::WriteOnly | QIODevice::Text) == false)
-        return false;
-
-    f.write(QJsonDocument(obj).toJson(QJsonDocument::Indented));
-    return true;
+    return JsonFile::write(configFile(), QJsonDocument(obj));
 }
 
 bool AppConfig::autoConnect() const { return m_autoConnect; }
@@ -199,6 +183,16 @@ void AppConfig::setStartHidden(const bool value)
     if (m_startHidden == value) return;
     DBG_SETTINGS(QStringLiteral("Setting changed: start_hidden = ") + (value ? QStringLiteral("true") : QStringLiteral("false")));
     m_startHidden = value;
+    (void)save();
+}
+
+bool AppConfig::closeToTray() const { return m_closeToTray; }
+
+void AppConfig::setCloseToTray(const bool value)
+{
+    if (m_closeToTray == value) return;
+    DBG_SETTINGS(QStringLiteral("Setting changed: close_to_tray = ") + (value ? QStringLiteral("true") : QStringLiteral("false")));
+    m_closeToTray = value;
     (void)save();
 }
 
@@ -285,6 +279,7 @@ void AppConfig::resetToDefaults()
     m_notifications          = true;
     m_recentConnectionsCount = DEFAULT_RECENT_CONNECTIONS_COUNT;
     m_startHidden            = false;
+    m_closeToTray            = true;
     m_theme                  = Theme::System;
     m_showLocationPicker     = true;
     m_showFavoritesDropdown  = true;

@@ -92,8 +92,15 @@ signals:
     void cliVersionReady(const QString& version);
     void accountTypeReady(AccountType type);
     void errorOccurred(const QString& error);
+    // Emitted instead of loginStatusResult when `protonvpn info` does not exit
+    // within the startup time limit - typically because the CLI is waiting on
+    // a keyring/wallet unlock prompt.
+    void loginCheckTimedOut();
 
 private:
+    // runCommand() timeout value that waits for the CLI indefinitely.
+    static constexpr int CLI_NO_TIMEOUT = 0;
+
     VpnState    m_state         = VpnState::Unknown;
     AccountType m_accountType   = AccountType::Unknown;
     QString     m_connectedServer;       // last server string seen while Connected
@@ -102,8 +109,13 @@ private:
     QProcess*       m_signinProcess  = nullptr;
     StatusMonitor*  m_statusMonitor  = nullptr;
 
+    // Runs `protonvpn <args>` and calls back with its exit code and output.
+    // With a timeoutMs, a CLI that has not exited by then is terminated and
+    // reported with exit code CLI_EXIT_TIMED_OUT; one that cannot be started
+    // at all is reported with CLI_EXIT_FAILED_TO_START (see protonvpnCli.cpp).
     void runCommand(const QStringList& args,
-                    const std::function<void(int exitCode, const QString& output, const QString& errOutput)>& callback);
+                    const std::function<void(int exitCode, const QString& output, const QString& errOutput)>& callback,
+                    int timeoutMs = CLI_NO_TIMEOUT);
 
     void checkLoginStatus(int retriesLeft);
 
@@ -124,6 +136,11 @@ private:
 
     // Apply a parsed `protonvpn status` snapshot to internal state and emit
     // the appropriate signals.  Only emits when state or connected server
-    // actually changed, to avoid unnecessary UI redraws.
+    // actually changed, to avoid unnecessary UI redraws.  Snapshots that could
+    // not be parsed (no "status" field) are ignored rather than read as a
+    // disconnect.
     void applyStatusFields(const QMap<QString, QString>& fields);
+
+    // Human-readable name for a state, used in diagnostics.
+    static QString stateToString(VpnState state);
 };

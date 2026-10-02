@@ -1,4 +1,5 @@
 #include "loginPage.h"
+#include "../geoUtils.h"
 #include "../widgets/flatpakBetaBanner.h"
 #include "../widgets/svgBanner.h"
 
@@ -9,9 +10,7 @@
 #include <QJsonDocument> // Ignore unused include warning; we do use QJsonDocument
 #include <QJsonObject>
 #include <QLabel>
-#include <QPainter>
 #include <QPixmap>
-#include <QSvgRenderer>
 #include <QVersionNumber>
 
 namespace
@@ -39,12 +38,7 @@ constexpr int STACK_INDEX_TFA           = 1;
 
 QIcon svgIcon(const QString& path, const QSize& size = {SVG_ICON_SIZE, SVG_ICON_SIZE})
 {
-    QPixmap pix(size);
-    pix.fill(Qt::transparent);
-    QPainter p(&pix);
-    QSvgRenderer renderer(path);
-    renderer.render(&p);
-    return QIcon(pix);
+    return QIcon(GeoUtils::svgPixmap(path, size.width(), size.height()));
 }
 } // namespace
 
@@ -109,7 +103,7 @@ LoginPage::LoginPage(QWidget* parent)
 
     m_outerLayout->addWidget(card, 0, Qt::AlignCenter);
 
-    // Banner scroll area — holds warning banners below the card.
+    // Banner scroll area - holds warning banners below the card.
     // Capped at BANNER_AREA_MAX_HEIGHT so banners can never squish the
     // login/2FA input fields when multiple warnings are visible at once.
     QWidget* bannerContainer = new QWidget(this);
@@ -206,6 +200,13 @@ void LoginPage::buildCredsWidget()
     connect(m_passwordEdit, &QLineEdit::returnPressed, m_loginBtn, &QPushButton::click);
     connect(m_usernameEdit, &QLineEdit::returnPressed, m_passwordEdit,
             [this](){ m_passwordEdit->setFocus(); });
+
+    // Both fields are required; submitting an empty form only produced a CLI
+    // error round-trip.
+    connect(m_usernameEdit, &QLineEdit::textChanged, this, &LoginPage::updateSignInEnabled);
+    connect(m_passwordEdit, &QLineEdit::textChanged, this, &LoginPage::updateSignInEnabled);
+    updateSignInEnabled();
+
     layout->addWidget(m_loginBtn);
 }
 
@@ -284,11 +285,17 @@ void LoginPage::reset() const
     setError(QString());
     m_passwordEdit->clear();
     m_tfaEdit->clear();
-    m_loginBtn->setEnabled(true);
     m_loginBtn->setText(tr("Sign In"));
+    updateSignInEnabled();
     m_usernameEdit->setEnabled(true);
     m_passwordEdit->setEnabled(true);
     m_togglePasswordBtn->setEnabled(true);
+}
+
+void LoginPage::updateSignInEnabled() const
+{
+    m_loginBtn->setEnabled(m_usernameEdit->text().trimmed().isEmpty() == false
+                           && m_passwordEdit->text().isEmpty() == false);
 }
 
 void LoginPage::setError(const QString& error) const
@@ -321,7 +328,14 @@ void LoginPage::setLoading(const bool loading) const
 {
     if (m_stack->currentIndex() == STACK_INDEX_CREDS)
     {
-        m_loginBtn->setEnabled(loading == false);
+        if (loading == true)
+        {
+            m_loginBtn->setEnabled(false);
+        }
+        else
+        {
+            updateSignInEnabled();
+        }
         m_loginBtn->setText(loading == true ? tr("Signing in\u2026") : tr("Sign In"));
         m_usernameEdit->setEnabled(loading == false);
         m_passwordEdit->setEnabled(loading == false);

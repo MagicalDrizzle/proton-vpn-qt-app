@@ -1,12 +1,11 @@
-#include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <ranges>
 #include "favoritesManager.h"
+#include "jsonFile.h"
 
 namespace
 {
@@ -125,9 +124,6 @@ void FavoritesManager::load()
 
 void FavoritesManager::save() const
 {
-    const QString path = favoritesFilePath();
-    QDir().mkpath(QFileInfo(path).absolutePath());
-
     QJsonArray arr;
     for (const auto& e : m_entries)
     {
@@ -138,10 +134,6 @@ void FavoritesManager::save() const
         arr.append(obj);
     }
 
-    QFile f(path);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Text))
-    {
-        f.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
-    }
+    (void)JsonFile::write(favoritesFilePath(), QJsonDocument(arr));
 }
 

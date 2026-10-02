@@ -498,7 +498,7 @@ QFrame#drawerNotch:hover {
     background-color: #2d2d4a;
 }
 
-/*  Tabs (Settings page) — Fusion has no built-in Breeze-like tab rendering,
+/*  Tabs (Settings page): Fusion has no built-in Breeze-like tab rendering,
     so this is defined explicitly rather than left to the active QStyle. */
 QTabWidget::pane {
     background-color: #1a1a2e;
@@ -585,3 +585,38 @@ QComboBox::down-arrow:disabled {
     opacity: 0.3;
 }
 
+/*  ==========================================================================
+    Colors that used to live in inline setStyleSheet() calls in C++.
+    Keeping them here means the light theme can override them; hardcoding
+    them in code made several of them illegible in the light theme.
+    ========================================================================== */
+
+/*  VPN status label - color follows the "vpnState" dynamic property  */
+QLabel#vpnStatusLabel {
+    font-size: 16pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #9999bb;
+}
+QLabel#vpnStatusLabel[vpnState="connected"]     { color: #1a9c5b; }
+QLabel#vpnStatusLabel[vpnState="disconnected"]  { color: #888888; }
+QLabel#vpnStatusLabel[vpnState="transitioning"] { color: #f5a623; }
+QLabel#vpnStatusLabel[vpnState="error"]         { color: #d63f3f; }
+
+/*  Secondary description text under a setting name  */
+QLabel#settingsDesc                  { color: #888888; }
+QLabel#settingsDesc[disabled="true"] { color: #444444; }
+QLabel#infoKey[disabled="true"]      { color: #555555; }
+
+/*  Accent rows: "Fastest server" entries and picker actions  */
+QLabel#locationPickerItemLabel[fastest="true"] { color: #ab8fff; }
+QLabel#cityLabel[fastest="true"] { color: #ab8fff; background-color: transparent; }
+QLabel#locationPickerItemLabel[action="true"] { color: #888888; }
+
+/*  Location picker dimmed for free accounts (no location choice)  */
+QLabel#locationPickerTop[dimmed="true"],
+QLabel#locationPickerBottom[dimmed="true"] { color: #666677; }
+
+/*  Account plan value  */
+QLabel#infoValue[plan="free"] { color: #aaaaaa; font-weight: normal; }
+QLabel#infoValue[plan="plus"] { color: #7B61FF; font-weight: bold; }

@@ -108,7 +108,7 @@ DebugPage::DebugPage(QWidget* parent)
         tr("This page is only available in debug builds. Press F11 to toggle the sidebar button."),
         content);
     subtitleLabel->setWordWrap(true);
-    subtitleLabel->setStyleSheet(QStringLiteral("color: #888;"));
+    subtitleLabel->setObjectName(QStringLiteral("settingsDesc"));
     layout->addWidget(subtitleLabel);
 
     layout->addWidget(makeDivider(content));
@@ -144,7 +144,7 @@ DebugPage::DebugPage(QWidget* parent)
         // (very long single line) overflow handling in the dialog.
         const QString loremLine = tr(
             "This is a very long error line intended to trigger horizontal scrollbar / wrapping behaviour "
-            "inside the ErrorDetailsDialog — it just keeps going and going without any newline break whatsoever. "
+            "inside the ErrorDetailsDialog; it just keeps going and going without any newline break whatsoever. "
             "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore "
             "et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.");
 
@@ -154,7 +154,7 @@ DebugPage::DebugPage(QWidget* parent)
         lines << loremLine;  // first line: horizontal overflow
         for (int i = 1; i <= ERROR_BODY_LINES; ++i)
         {
-            lines << tr("[line %1] Error: something went wrong in module %1 — details follow here.").arg(i);
+            lines << tr("[line %1] Error: something went wrong in module %1. Details follow here.").arg(i);
         }
         lines << loremLine;  // last line: horizontal overflow again
 
@@ -185,6 +185,30 @@ DebugPage::DebugPage(QWidget* parent)
 
     layout->addWidget(makeDivider(content));
 
+    //  Pages section
+    layout->addWidget(makeSectionHeader(tr("Pages"), content));
+
+    QPushButton* notInstalledBtn = new QPushButton(tr("Test \u201cNot Installed\u201d Page"), content);
+    notInstalledBtn->setObjectName(QStringLiteral("secondaryButton"));
+    notInstalledBtn->setCursor(Qt::PointingHandCursor);
+    notInstalledBtn->setToolTip(
+        tr("Shows the page displayed when the protonvpn CLI cannot be found. "
+           "Its Check Again button runs the real CLI check."));
+    connect(notInstalledBtn, &QPushButton::clicked, this, &DebugPage::notInstalledPageRequested);
+    layout->addWidget(notInstalledBtn, 0, Qt::AlignLeft);
+
+    QPushButton* cliNotRespondingBtn =
+        new QPushButton(tr("Test \u201cCLI Not Responding\u201d Page"), content);
+    cliNotRespondingBtn->setObjectName(QStringLiteral("secondaryButton"));
+    cliNotRespondingBtn->setCursor(Qt::PointingHandCursor);
+    cliNotRespondingBtn->setToolTip(
+        tr("Shows the page displayed when protonvpn info times out at startup. "
+           "Its Try Again button runs the real login check."));
+    connect(cliNotRespondingBtn, &QPushButton::clicked, this, &DebugPage::cliNotRespondingPageRequested);
+    layout->addWidget(cliNotRespondingBtn, 0, Qt::AlignLeft);
+
+    layout->addWidget(makeDivider(content));
+
     //  Settings section
     layout->addWidget(makeSectionHeader(tr("Settings"), content));
 
@@ -196,7 +220,7 @@ DebugPage::DebugPage(QWidget* parent)
         tr("Delete the config file and reset every value to its default."),
         content);
     clearDesc->setWordWrap(true);
-    clearDesc->setStyleSheet(QStringLiteral("color: #888;"));
+    clearDesc->setObjectName(QStringLiteral("settingsDesc"));
     clearRow->addWidget(clearDesc, 1);
 
     QPushButton* clearAllBtn = new QPushButton(tr("Clear All Settings"), content);
@@ -323,7 +347,7 @@ DebugPage::DebugPage(QWidget* parent)
            "Set the simulated previous version to control which migrations would fire."),
         content);
     migrDesc->setWordWrap(true);
-    migrDesc->setStyleSheet(QStringLiteral("color: #888;"));
+    migrDesc->setObjectName(QStringLiteral("settingsDesc"));
     layout->addWidget(migrDesc);
 
     // Version input row + Run All button

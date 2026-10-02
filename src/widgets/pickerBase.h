@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QAbstractButton>
+#include <QColor>
 #include <QCursor>
 #include <QEvent>
 #include <QFrame>
@@ -8,6 +9,8 @@
 #include <QHideEvent>
 #include <QListWidget>
 #include <QMouseEvent>
+#include <QPalette>
+#include <QPointer>
 #include <QVBoxLayout>
 #include "elidaLabel.h"
 
@@ -30,6 +33,13 @@ public:
     static constexpr int PICKER_EXPANDED_V_MARGIN = 8;
     static constexpr int POPUP_MAX_VISIBLE_ROWS  = 8;
     static constexpr int POPUP_LIST_BORDER       = 2;
+    // Leading icon slot in the header (flag, clock, star) - sized 4:3 so flags
+    // keep their natural aspect ratio.
+    static constexpr int LEADING_ICON_W          = 28;
+    static constexpr int LEADING_ICON_H          = 21;
+    static constexpr int TEXT_COL_SPACING        = 1;
+    // Alpha (0-255) applied to the palette highlight color for row hover.
+    static constexpr int ROW_HOVER_ALPHA         = 60;
 
     explicit PickerBase(QWidget* parent = nullptr) : QFrame(parent) {}
 
@@ -66,6 +76,65 @@ public:
     }
 
 protected:
+    // Builds the standard picker header - leading icon, two-line text block,
+    // chevron - plus the outer layout, the popup and the row-click wiring.
+    //
+    // All three pickers had their own copy of this; they differed only in the
+    // leading icon and the two strings, so any styling change had to be made
+    // three times.  `leadingIcon` is reparented into the header (pass nullptr
+    // for no icon).
+    void buildHeader(QWidget* leadingIcon, const QString& topText, const QString& bottomText)
+    {
+        m_header = new QFrame(this);
+        m_header->setObjectName(QStringLiteral("locationPickerHeader"));
+        m_header->setCursor(Qt::PointingHandCursor);
+
+        QHBoxLayout* headerLayout = new QHBoxLayout(m_header);
+        headerLayout->setContentsMargins(PICKER_MARGIN, PICKER_EXPANDED_V_MARGIN,
+                                         PICKER_MARGIN, PICKER_EXPANDED_V_MARGIN);
+        headerLayout->setSpacing(PICKER_MARGIN);
+
+        if (leadingIcon != nullptr)
+        {
+            leadingIcon->setParent(m_header);
+            leadingIcon->setFixedSize(LEADING_ICON_W, LEADING_ICON_H);
+            QLabel* iconLabel = qobject_cast<QLabel*>(leadingIcon);
+            if (iconLabel != nullptr)
+            {
+                iconLabel->setAlignment(Qt::AlignCenter);
+            }
+            headerLayout->addWidget(leadingIcon);
+        }
+
+        QVBoxLayout* textCol = new QVBoxLayout();
+        textCol->setSpacing(TEXT_COL_SPACING);
+        textCol->setContentsMargins(0, 0, 0, 0);
+
+        m_topLine = new ElideLabel(topText, m_header);
+        m_topLine->setObjectName(QStringLiteral("locationPickerTop"));
+        m_bottomLine = new ElideLabel(bottomText, m_header);
+        m_bottomLine->setObjectName(QStringLiteral("locationPickerBottom"));
+        textCol->addWidget(m_topLine);
+        textCol->addWidget(m_bottomLine);
+        headerLayout->addLayout(textCol, 1);
+
+        m_chevron = new QLabel(QStringLiteral("▾"), m_header);
+        m_chevron->setObjectName(QStringLiteral("locationPickerChevron"));
+        headerLayout->addWidget(m_chevron);
+
+        QVBoxLayout* outerLayout = new QVBoxLayout(this);
+        outerLayout->setContentsMargins(0, 0, 0, 0);
+        outerLayout->setSpacing(0);
+        outerLayout->addWidget(m_header);
+
+        initPopup();
+        m_header->installEventFilter(this);
+        // Routed through the virtual so the base class does not need to know
+        // which subclass it is building for.
+        connect(m_list, &QListWidget::itemClicked, this,
+                [this](QListWidgetItem* item) { onRowClicked(item); });
+    }
+
     // Must be called by the subclass constructor after building the header.
     void initPopup()
     {
@@ -166,8 +235,8 @@ protected:
         // Header click -> toggle
         if (obj->isWidgetType() && ev->type() == QEvent::MouseButtonRelease)
         {
-            const QWidget* w = dynamic_cast<QWidget*>(obj);
-            if (w->objectName() == QLatin1String("locationPickerHeader"))
+            const QWidget* w = qobject_cast<QWidget*>(obj);
+            if (w != nullptr && w->objectName() == QLatin1String("locationPickerHeader"))
             {
                 const QWidget* p = w;
                 while (p != nullptr)
@@ -202,30 +271,23 @@ protected:
             {
                 if (ev->type() == QEvent::Enter || ev->type() == QEvent::MouseMove)
                 {
-                    for (QObject* child : m_list->viewport()->children())
-                    {
-                        QWidget* cw = qobject_cast<QWidget*>(child);
-                        if (cw != nullptr && cw != rowRoot)
-                        {
-                            cw->setStyleSheet(QStringLiteral("background-color: transparent;"));
-                        }
-                    }
-                    rowRoot->setStyleSheet(QStringLiteral("background-color: #2d2d4a;"));
+                    setHoveredRow(rowRoot);
                     return false;
                 }
                 if (ev->type() == QEvent::Leave)
                 {
                     const QPoint globalPos = QCursor::pos();
-                    if (rowRoot->rect().contains(rowRoot->mapFromGlobal(globalPos)) == false)
+                    if (rowRoot->rect().contains(rowRoot->mapFromGlobal(globalPos)) == false &&
+                        m_hoveredRow == rowRoot)
                     {
-                        rowRoot->setStyleSheet(QStringLiteral("background-color: transparent;"));
+                        setHoveredRow(nullptr);
                     }
                     return false;
                 }
                 if (ev->type() == QEvent::MouseButtonRelease)
                 {
                     const QPoint vp = m_list->viewport()->mapFromGlobal(
-                        w->mapToGlobal(dynamic_cast<QMouseEvent*>(ev)->pos()));
+                        w->mapToGlobal(static_cast<QMouseEvent*>(ev)->pos()));
                     QListWidgetItem* item = m_list->itemAt(vp);
                     if (item != nullptr)
                     {
@@ -241,6 +303,47 @@ protected:
     // Subclasses implement this to react to a row click.
     virtual void onRowClicked(QListWidgetItem* item) = 0;
 
+    // Moves the hover highlight to `row` (nullptr clears it).
+    //
+    // Only the row that is losing the highlight and the one gaining it are
+    // restyled - the previous version re-applied a stylesheet to every sibling
+    // row on every single mouse-move event, forcing a full style repolish of
+    // the whole list each time the pointer moved a pixel.
+    void setHoveredRow(QWidget* row)
+    {
+        if (m_hoveredRow == row) return;
+
+        if (m_hoveredRow.isNull() == false)
+        {
+            m_hoveredRow->setStyleSheet(QStringLiteral("background-color: transparent;"));
+        }
+        m_hoveredRow = row;
+        if (m_hoveredRow.isNull() == false)
+        {
+            m_hoveredRow->setStyleSheet(rowHoverStyle());
+        }
+    }
+
+    // Hover background, derived from the palette so it tracks the active theme.
+    // A hardcoded dark value here left the light theme painting near-black row
+    // text on a dark navy background.
+    [[nodiscard]] QString rowHoverStyle() const
+    {
+        const QColor highlight = palette().color(QPalette::Highlight);
+        return QStringLiteral("background-color: rgba(%1, %2, %3, %4);")
+            .arg(highlight.red())
+            .arg(highlight.green())
+            .arg(highlight.blue())
+            .arg(ROW_HOVER_ALPHA);
+    }
+
+    ~PickerBase() override
+    {
+        // m_popup is a parentless top-level (Qt::Popup) window, so it is not
+        // destroyed along with this widget the way a child would be.
+        delete m_popup;
+    }
+
     void hideEvent(QHideEvent* event) override
     {
         closePopup();
@@ -255,5 +358,11 @@ protected:
     ElideLabel*  m_topLine    = nullptr;
     ElideLabel*  m_bottomLine = nullptr;
     bool         m_collapsed  = false;
+
+private:
+    // QPointer, not a raw pointer: refresh()/populate() call m_list->clear(),
+    // which destroys the row widgets - a raw pointer would be left dangling and
+    // restyled on the next hover.
+    QPointer<QWidget> m_hoveredRow; // row currently painted with the hover style
 };
 

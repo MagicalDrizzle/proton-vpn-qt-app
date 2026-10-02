@@ -20,6 +20,12 @@ public:
     explicit DebugPage(QWidget* parent = nullptr);
     void setLeftPadding(int px);
 
+signals:
+    // Ask MainWindow to show one of its startup failure pages without having
+    // to reproduce the failure: a missing CLI, or a login check that timed out.
+    void notInstalledPageRequested();
+    void cliNotRespondingPageRequested();
+
 private slots:
     void refreshValues() const;
 

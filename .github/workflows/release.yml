@@ -109,6 +109,75 @@ jobs:
           name: flatpak-bundle
           path: io.github.wheat32.ProtonVPNQt.flatpak
 
+  # Same build as build-flatpak, for ARM64 on a native ARM runner (no
+  # emulation). Only the bundle name differs: the x86_64 bundle keeps its
+  # original name so existing download links keep working.
+  build-flatpak-arm64:
+    name: Build Flatpak ARM64 (Ubuntu)
+    runs-on: ubuntu-26.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Flatpak tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add flathub remote
+        run: |
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Resolve latest KDE runtime version
+        id: kde
+        run: |
+          latest=$(flatpak remote-ls --user --runtime --arch=aarch64 --columns=ref flathub \
+            | grep "^runtime/org.kde.Platform/aarch64/" \
+            | sed 's|runtime/org.kde.Platform/aarch64/||' \
+            | grep -E '^[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -1)
+          if [[ -z "$latest" ]]; then
+            echo "::error::Could not resolve the latest aarch64 org.kde.Platform version from Flathub."
+            exit 1
+          fi
+          echo "Resolved KDE runtime version: $latest"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Patch manifest runtime-version
+        run: |
+          sed -i "s/^runtime-version:.*/runtime-version: '${{ steps.kde.outputs.version }}'/" \
+            io.github.wheat32.ProtonVPNQt.yml
+
+      - name: Install KDE runtime and SDK
+        run: |
+          flatpak install --user --noninteractive flathub \
+            org.kde.Platform/aarch64/${{ steps.kde.outputs.version }} \
+            org.kde.Sdk/aarch64/${{ steps.kde.outputs.version }}
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder \
+            --force-clean \
+            --repo=.flatpak-repo \
+            .flatpak-build \
+            io.github.wheat32.ProtonVPNQt.yml
+
+      - name: Export bundle
+        run: |
+          flatpak build-bundle \
+            .flatpak-repo \
+            io.github.wheat32.ProtonVPNQt-aarch64.flatpak \
+            io.github.wheat32.ProtonVPNQt
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle-arm64
+          path: io.github.wheat32.ProtonVPNQt-aarch64.flatpak
+
   build-appimage-standalone:
     name: Build AppImage Standalone (Ubuntu)
     runs-on: ubuntu-26.04
@@ -144,7 +213,7 @@ jobs:
           path: dist/*-standalone-*.AppImage
 
   # Same build as above, but pinned to ubuntu-24.04 instead of ubuntu-26.04.
-  # Ubuntu 26.04's own apt packages (openssl, curl, etc. — everything except
+  # Ubuntu 26.04's own apt packages (openssl, curl, etc.; everything except
   # Qt, which now comes from aqt regardless of variant) are compiled against a
   # raised CPU baseline (x86-64-v3 / AVX2), so an AppImage built there won't
   # run on older, pre-AVX2 CPUs. This variant stays on 24.04's baseline apt
@@ -187,6 +256,45 @@ jobs:
           name: appimage-standalone-compat
           path: dist/*-standalone-compat-*.AppImage
 
+  # Same build as build-appimage-standalone, for ARM64 on a native ARM runner.
+  # Pinned to ubuntu-24.04-arm: the ARM64 Qt from aqt is built on Ubuntu 24.04
+  # and needs glibc 2.38, so 24.04 is the oldest runner it works on, and the
+  # oldest runner lets the AppImage run on the widest range of distros. There
+  # is no ARM64 compat variant because the AVX2 problem is specific to x86.
+  build-appimage-standalone-arm64:
+    name: Build AppImage Standalone ARM64 (Ubuntu 24.04)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build \
+            libgl1-mesa-dev libwayland-dev pkg-config \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1 libx11-xcb1 \
+            python3 python3-venv python3-gi python3-gi-cairo \
+            wget
+
+      - name: Build AppImage (Standalone ARM64)
+        run: |
+          chmod +x build-appimage_standalone.sh
+          ./build-appimage_standalone.sh
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-standalone-arm64
+          path: dist/*-standalone-aarch64.AppImage
+
   build-appimage-lite:
     name: Build AppImage Lite (Ubuntu)
     runs-on: ubuntu-26.04
@@ -221,10 +329,46 @@ jobs:
           name: appimage-lite
           path: dist/*-lite-*.AppImage
 
+  # Same build as build-appimage-lite, for ARM64. See
+  # build-appimage-standalone-arm64 for why it is pinned to ubuntu-24.04-arm.
+  build-appimage-lite-arm64:
+    name: Build AppImage Lite ARM64 (Ubuntu 24.04)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build \
+            libgl1-mesa-dev libwayland-dev pkg-config \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1 libx11-xcb1 \
+            python3 python3-venv \
+            wget
+
+      - name: Build AppImage (Lite ARM64)
+        run: |
+          chmod +x build-appimage_lite.sh
+          ./build-appimage_lite.sh
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-lite-arm64
+          path: dist/*-lite-aarch64.AppImage
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-26.04
-    needs: [build-native, build-flatpak, build-appimage-standalone, build-appimage-standalone-compat, build-appimage-lite]
+    needs: [build-native, build-flatpak, build-flatpak-arm64, build-appimage-standalone, build-appimage-standalone-compat, build-appimage-standalone-arm64, build-appimage-lite, build-appimage-lite-arm64]
 
     steps:
       - name: Checkout
@@ -251,6 +395,11 @@ jobs:
         with:
           name: flatpak-bundle
 
+      - name: Download Flatpak bundle (ARM64)
+        uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle-arm64
+
       - name: Download AppImage (Standalone)
         uses: actions/download-artifact@v4
         with:
@@ -261,10 +410,20 @@ jobs:
         with:
           name: appimage-standalone-compat
 
+      - name: Download AppImage (Standalone ARM64)
+        uses: actions/download-artifact@v4
+        with:
+          name: appimage-standalone-arm64
+
       - name: Download AppImage (Lite)
         uses: actions/download-artifact@v4
         with:
           name: appimage-lite
+
+      - name: Download AppImage (Lite ARM64)
+        uses: actions/download-artifact@v4
+        with:
+          name: appimage-lite-arm64
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -278,19 +437,24 @@ jobs:
 
             ## Downloads
 
-            | File | Description |
-            |------|-------------|
-            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-x86_64.AppImage` | AppImage — bundles the ProtonVPN CLI; no separate install needed |
-            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-compat-x86_64.AppImage` | AppImage — same as Standalone, but built for compatibility with older (pre-2015-ish, pre-AVX2) CPUs |
-            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-x86_64.AppImage` | AppImage — Qt app only; requires the ProtonVPN CLI installed on your system |
-            | `proton-vpn-qt-app-linux-x86_64.tar.gz` | Native binary (requires ProtonVPN CLI on host) |
-            | `io.github.wheat32.ProtonVPNQt.flatpak` | Flatpak bundle (requires ProtonVPN CLI on host) |
+            | File | Architecture | Description |
+            |------|--------------|-------------|
+            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-x86_64.AppImage` | x86_64 | AppImage: bundles the ProtonVPN CLI; no separate install needed |
+            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-compat-x86_64.AppImage` | x86_64 | AppImage: same as Standalone, but built for compatibility with older (pre-2015-ish, pre-AVX2) CPUs |
+            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-aarch64.AppImage` | ARM64 (aarch64) | AppImage: bundles the ProtonVPN CLI; no separate install needed |
+            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-x86_64.AppImage` | x86_64 | AppImage: Qt app only; requires the ProtonVPN CLI installed on your system |
+            | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-aarch64.AppImage` | ARM64 (aarch64) | AppImage: Qt app only; requires the ProtonVPN CLI installed on your system |
+            | `proton-vpn-qt-app-linux-x86_64.tar.gz` | x86_64 | Native binary (requires ProtonVPN CLI on host) |
+            | `io.github.wheat32.ProtonVPNQt.flatpak` | x86_64 | Flatpak bundle (requires ProtonVPN CLI on host) |
+            | `io.github.wheat32.ProtonVPNQt-aarch64.flatpak` | ARM64 (aarch64) | Flatpak bundle (requires ProtonVPN CLI on host) |
 
-            ### AppImage — Standalone vs Lite
+            Most desktops and laptops are **x86_64**. Choose **ARM64** for ARM machines such as a Raspberry Pi or a Snapdragon laptop; the commands below use the x86_64 filenames, so swap in the `-aarch64` file on ARM.
 
-            The **Standalone** AppImage bundles a portable Python interpreter and the ProtonVPN CLI packages, so no extra install is required. The **Lite** AppImage contains only the Qt frontend and relies on the [Proton VPN Linux CLI](https://protonvpn.com/support/linux-vpn-tool/) already being installed on your system — useful if you already have it set up and want a smaller download.
+            ### AppImage: Standalone vs Lite
 
-            If the regular Standalone AppImage fails to launch with a `CPU ISA level is lower than required` error, your CPU likely doesn't support AVX2 — use the **Standalone Compat** build instead.
+            The **Standalone** AppImage bundles a portable Python interpreter and the ProtonVPN CLI packages, so no extra install is required. The **Lite** AppImage contains only the Qt frontend and relies on the [Proton VPN Linux CLI](https://protonvpn.com/support/linux-vpn-tool/) already being installed on your system, which is useful if you already have it set up and want a smaller download.
+
+            If the regular Standalone AppImage fails to launch with a `CPU ISA level is lower than required` error, your CPU likely doesn't support AVX2; use the **Standalone Compat** build instead.
 
             ```bash
             chmod +x ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-x86_64.AppImage
@@ -316,7 +480,10 @@ jobs:
           files: |
             ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-x86_64.AppImage
             ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-compat-x86_64.AppImage
+            ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-standalone-aarch64.AppImage
             ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-x86_64.AppImage
+            ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-aarch64.AppImage
             proton-vpn-qt-app-linux-x86_64.tar.gz
             io.github.wheat32.ProtonVPNQt.flatpak
+            io.github.wheat32.ProtonVPNQt-aarch64.flatpak
           make_latest: true

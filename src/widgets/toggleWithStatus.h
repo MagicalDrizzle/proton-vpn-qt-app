@@ -7,7 +7,7 @@
 #include "toggleSwitch.h"
 
 // A ToggleSwitch with a small "ON" / "OFF" label beside it. Drop-in
-// replacement for ToggleSwitch — same setOn() / isOn() interface and
+// replacement for ToggleSwitch, with the same setOn() / isOn() interface and
 // the same toggled(bool) signal.
 class ToggleWithStatus : public QWidget
 {

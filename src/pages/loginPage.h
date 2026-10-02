@@ -56,7 +56,7 @@ private:
     QPushButton* m_errorDetailsBtn = nullptr;
     mutable QString m_rawError;
     QVBoxLayout* m_outerLayout = nullptr;
-    // Banner scroll area — holds all warning banners below the login card.
+    // Banner scroll area - holds all warning banners below the login card.
     // Scrollable so that multiple banners never squish the input fields.
     QScrollArea*  m_bannerScrollArea = nullptr;
     QVBoxLayout*  m_bannerLayout     = nullptr;
@@ -67,6 +67,8 @@ private:
 
     bool m_passwordVisible = false;
     void togglePasswordVisibility() const;
+    // Keeps the Sign In button disabled until both fields have content.
+    void updateSignInEnabled() const;
     void buildCredsWidget();
     void buildTFAWidget();
 };

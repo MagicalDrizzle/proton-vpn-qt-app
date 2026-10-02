@@ -35,7 +35,7 @@ public:
 
     // Returns true if there is any raw history data, regardless of the current
     // recentConnectionsCount() setting (i.e. even when count is 0).
-    [[nodiscard]] bool hasAnyEntries() const { return !m_entries.isEmpty(); }
+    [[nodiscard]] bool hasAnyEntries() const { return m_entries.isEmpty() == false; }
 
     // Erase all history entries and persist the empty list.
     void clear();

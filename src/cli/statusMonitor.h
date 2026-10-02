@@ -13,6 +13,8 @@
 #include <QProcess>
 #include <QString>
 
+class QTimer;
+
 class StatusMonitor : public QObject
 {
     Q_OBJECT
@@ -35,6 +37,11 @@ public:
 
     // Strip noise lines from `protonvpn status` output and parse all
     // "Key: Value" pairs into a map (keys are lowercased).
+    //
+    // A missing "status" key means the snapshot could not be understood (an
+    // empty read, a traceback, a hung CLI). Callers must treat that as "no new
+    // information" rather than as a disconnect - see
+    // VpnManager::applyStatusFields().
     static QMap<QString, QString> parseStatusFields(const QString& combined);
 
     // Extract the city from a server string like "US-NJ#203 in Secaucus, United States".
@@ -53,6 +60,7 @@ private:
     void launchProcess();
 
     QProcess* m_process      = nullptr;
+    QTimer*   m_restartTimer = nullptr; // owned; canceled by stop()
     QString   m_buffer;
     int       m_restartCount = 0;
     bool      m_stopping     = false; // set by stop() to suppress auto-restart

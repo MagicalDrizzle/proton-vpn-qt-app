@@ -2,15 +2,17 @@
 
 #include <QCoreApplication>
 
+#include <iterator>
+
 // Shared UI helpers used across multiple source files.
 
 //  Braille spinner frames
 // Use with spinnerFrame() and kSpinnerFrameCount.
-static constexpr const char* kSpinnerFrames[] =
+inline constexpr const char* kSpinnerFrames[] =
 {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
 };
-static constexpr int kSpinnerFrameCount = 10;
+inline constexpr int kSpinnerFrameCount = 10;
 
 // Server-feature metadata
 // Used to render per-item feature icons in city lists / location pickers.
@@ -21,7 +23,7 @@ struct FeatureMeta
     const char* tooltip;
 };
 
-static constexpr FeatureMeta kServerFeatures[] =
+inline constexpr FeatureMeta kServerFeatures[] =
 {
     // Designated initializers: C++23 feature!
     {
@@ -41,7 +43,7 @@ static constexpr FeatureMeta kServerFeatures[] =
     },
 };
 
-static constexpr int kServerFeatureCount = std::size(kServerFeatures);
+inline constexpr int kServerFeatureCount = std::size(kServerFeatures);
 
 // Returns the translated tooltip for a server feature.
 // Use this instead of accessing meta.tooltip directly so the string is

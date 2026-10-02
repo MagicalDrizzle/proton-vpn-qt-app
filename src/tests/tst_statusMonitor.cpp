@@ -47,7 +47,7 @@ private slots:
         QVERIFY(fields.contains(QStringLiteral("status")));
         QVERIFY(fields.contains(QStringLiteral("server")));
         // The original-case keys must NOT be present.
-        QVERIFY(!fields.contains(QStringLiteral("STATUS")));
+        QVERIFY(fields.contains(QStringLiteral("STATUS")) == false);
     }
 
     void parseStatusFields_valuesPreserveCase()
@@ -81,6 +81,42 @@ private slots:
     {
         const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(QString());
         QVERIFY(fields.isEmpty());
+    }
+
+    void parseStatusFields_traceback_hasNoStatusField()
+    {
+        // A crashed CLI must NOT look like a disconnect: callers key off the
+        // presence of "status" to decide whether the snapshot is usable.
+        const QString input =
+            QStringLiteral("Traceback (most recent call last):\n"
+                           "  File \"/usr/bin/protonvpn\", line 8, in <module>\n"
+                           "RuntimeError: daemon unavailable\n");
+
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+
+        QVERIFY(fields.contains(QStringLiteral("status")) == false);
+    }
+
+    void parseStatusFields_noActiveConnectionProse_synthesizesDisconnected()
+    {
+        // Some CLI versions print a sentence instead of a "Status:" line.
+        const QString input = QStringLiteral("There is no active Proton VPN connection.\n");
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+        QCOMPARE(fields.value(QStringLiteral("status")), QStringLiteral("Disconnected"));
+    }
+
+    void parseStatusFields_notConnectedProse_synthesizesDisconnected()
+    {
+        const QString input = QStringLiteral("You are not connected.\n");
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+        QCOMPARE(fields.value(QStringLiteral("status")), QStringLiteral("Disconnected"));
+    }
+
+    void parseStatusFields_explicitStatus_isNotOverwrittenBySynthesis()
+    {
+        const QString input = QStringLiteral("Status: Connected\nServer: DE#42\n");
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+        QCOMPARE(fields.value(QStringLiteral("status")), QStringLiteral("Connected"));
     }
 
     void parseStatusFields_noiseLines_areRemoved()

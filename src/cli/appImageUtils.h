@@ -14,12 +14,23 @@ inline bool isRunningAsAppImage()
     return qEnvironmentVariableIsSet("APPIMAGE");
 }
 
+// Absolute path of the .AppImage file the user actually launched.
+//
+// This is NOT the same as QCoreApplication::applicationFilePath(), which points
+// inside the temporary SquashFS mount (/tmp/.mount_XXXXXX/usr/bin/...) and stops
+// existing the moment the app exits.  Anything that has to survive a restart -
+// an autostart entry, a saved launch command - must use this instead.
+inline QString appImagePath()
+{
+    return qEnvironmentVariable("APPIMAGE");
+}
+
 // Returns true when this is the Standalone AppImage variant, identified by
 // the presence of the bundled CLI launcher AppRun places on PATH. The Lite
 // AppImage never ships this launcher, since it relies on a host CLI install.
 inline bool isStandaloneAppImage()
 {
-    if (!isRunningAsAppImage())
+    if (isRunningAsAppImage() == false)
     {
         return false;
     }
@@ -38,6 +49,6 @@ inline bool systemProtonVpnCliInstalledSeparately()
         qEnvironmentVariable("APPDIR") + QStringLiteral("/usr/share/protonvpn");
     QStringList searchDirs = qEnvironmentVariable("PATH").split(QLatin1Char(':'), Qt::SkipEmptyParts);
     searchDirs.removeAll(bundledDir);
-    return !QStandardPaths::findExecutable(QStringLiteral("protonvpn"), searchDirs).isEmpty();
+    return QStandardPaths::findExecutable(QStringLiteral("protonvpn"), searchDirs).isEmpty() == false;
 }
 
