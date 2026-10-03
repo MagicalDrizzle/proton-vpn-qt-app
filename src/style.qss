@@ -149,6 +149,18 @@ QListWidget#locationPickerList::item:selected:!active {
 QListWidget#locationPickerList::item:hover {
     background-color: #2d2d4a;
 }
+/*  Picker dropdown row under the mouse (PickerBase::setHoveredRow). Matches the
+    row only, never the labels and buttons inside it, so the translucent color
+    is painted once.  */
+QListWidget#locationPickerList QWidget[hovered="true"] {
+    background-color: rgba(109, 74, 255, 60);
+}
+
+/*  Countries page: the "Fastest server" row at the top of a city list  */
+QWidget#cityRow[fastest="true"] {
+    background-color: rgba(109, 74, 255, 40);
+}
+
 QLabel#locationPickerItemLabel {
     color: #eaeaea;
     font-size: 13px;

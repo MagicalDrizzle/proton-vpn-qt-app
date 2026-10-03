@@ -1315,6 +1315,7 @@ void CountriesPage::addNarrowCityItem(QVBoxLayout* layout, const QString& city,
     const QStringList tags = features.split(QLatin1Char(','), Qt::SkipEmptyParts);
 
     QWidget* row = new QWidget();
+    row->setObjectName(QStringLiteral("cityRow"));
     row->setCursor(Qt::PointingHandCursor);
     QHBoxLayout* hbox = new QHBoxLayout(row);
     hbox->setContentsMargins(8, 6, 8, 6);
@@ -1331,7 +1332,9 @@ void CountriesPage::addNarrowCityItem(QVBoxLayout* layout, const QString& city,
         f.setItalic(true);
         cityLabel->setFont(f);
         cityLabel->setProperty("fastest", true);
-        row->setStyleSheet(QStringLiteral("background-color: rgba(109, 74, 255, 40);"));
+        // Tinted through style.qss (#cityRow[fastest]) instead of a local
+        // stylesheet, which would also paint every label and icon in the row.
+        row->setProperty("fastest", true);
     }
     hbox->addWidget(cityLabel, 1, Qt::AlignVCenter);
 

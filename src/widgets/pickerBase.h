@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QAbstractButton>
-#include <QColor>
 #include <QCursor>
 #include <QEvent>
 #include <QFrame>
@@ -9,10 +8,10 @@
 #include <QHideEvent>
 #include <QListWidget>
 #include <QMouseEvent>
-#include <QPalette>
 #include <QPointer>
 #include <QVBoxLayout>
 #include "elidaLabel.h"
+#include "styleUtils.h"
 
 // ============================================================
 // PickerBase – shared base for LocationPicker and RecentPicker.
@@ -38,8 +37,6 @@ public:
     static constexpr int LEADING_ICON_W          = 28;
     static constexpr int LEADING_ICON_H          = 21;
     static constexpr int TEXT_COL_SPACING        = 1;
-    // Alpha (0-255) applied to the palette highlight color for row hover.
-    static constexpr int ROW_HOVER_ALPHA         = 60;
 
     explicit PickerBase(QWidget* parent = nullptr) : QFrame(parent) {}
 
@@ -309,32 +306,25 @@ protected:
     // restyled - the previous version re-applied a stylesheet to every sibling
     // row on every single mouse-move event, forcing a full style repolish of
     // the whole list each time the pointer moved a pixel.
+    //
+    // The highlight is a QSS rule keyed on the row's "hovered" property (see
+    // style.qss) rather than a local setStyleSheet() on the row: a selector-less
+    // local rule also applies to every label and button inside the row, and
+    // each of them painted the translucent color again over the row's own,
+    // leaving darker boxes behind the text and icons.
     void setHoveredRow(QWidget* row)
     {
         if (m_hoveredRow == row) return;
 
         if (m_hoveredRow.isNull() == false)
         {
-            m_hoveredRow->setStyleSheet(QStringLiteral("background-color: transparent;"));
+            setStyleProperty(m_hoveredRow, "hovered", false);
         }
         m_hoveredRow = row;
         if (m_hoveredRow.isNull() == false)
         {
-            m_hoveredRow->setStyleSheet(rowHoverStyle());
+            setStyleProperty(m_hoveredRow, "hovered", true);
         }
-    }
-
-    // Hover background, derived from the palette so it tracks the active theme.
-    // A hardcoded dark value here left the light theme painting near-black row
-    // text on a dark navy background.
-    [[nodiscard]] QString rowHoverStyle() const
-    {
-        const QColor highlight = palette().color(QPalette::Highlight);
-        return QStringLiteral("background-color: rgba(%1, %2, %3, %4);")
-            .arg(highlight.red())
-            .arg(highlight.green())
-            .arg(highlight.blue())
-            .arg(ROW_HOVER_ALPHA);
     }
 
     ~PickerBase() override
