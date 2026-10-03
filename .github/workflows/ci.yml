@@ -40,7 +40,7 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-binary-ci
+          name: native-binary-x86_64-ci
           path: build/proton_vpn_qt
           retention-days: 7
 
@@ -110,7 +110,7 @@ jobs:
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flatpak-ci
+          name: flatpak-x86_64-ci
           path: io.github.wheat32.ProtonVPNQt.flatpak
           retention-days: 7
 
@@ -219,7 +219,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-standalone-ci
+          name: appimage-standalone-x86_64-ci
           path: dist/*-standalone-*.AppImage
           retention-days: 7
 
@@ -261,7 +261,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-standalone-compat-ci
+          name: appimage-standalone-compat-x86_64-ci
           path: dist/*-standalone-compat-*.AppImage
           retention-days: 7
 
@@ -339,7 +339,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-lite-ci
+          name: appimage-lite-x86_64-ci
           path: dist/*-lite-*.AppImage
           retention-days: 7
 
