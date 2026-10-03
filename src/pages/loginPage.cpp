@@ -123,7 +123,6 @@ LoginPage::LoginPage(QWidget* parent)
     // Show a banner if this is a pre-release build
     checkPrereleaseBanner();
     checkFlatpakBetaBanner();
-    checkAppImageBetaBanner();
 }
 
 void LoginPage::buildCredsWidget()
@@ -397,18 +396,6 @@ void LoginPage::checkFlatpakBetaBanner()
         m_flatpakBetaBanner = nullptr;
     });
     m_bannerLayout->addWidget(m_flatpakBetaBanner);
-    m_bannerScrollArea->setVisible(true);
-}
-
-void LoginPage::checkAppImageBetaBanner()
-{
-    m_appImageBetaBanner = AppImageBetaBanner::createIfAppImage(this);
-    if (m_appImageBetaBanner == nullptr) return;
-    connect(m_appImageBetaBanner, &AppImageBetaBanner::dismissed, this, [this]()
-    {
-        m_appImageBetaBanner = nullptr;
-    });
-    m_bannerLayout->addWidget(m_appImageBetaBanner);
     m_bannerScrollArea->setVisible(true);
 }
 

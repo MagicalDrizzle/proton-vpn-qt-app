@@ -1150,7 +1150,6 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     // Show a banner if this is a pre-release build
     checkPrereleaseBanner();
     checkFlatpakBetaBanner();
-    checkAppImageBetaBanner();
 
     // React to plan type (Free vs Plus) - affects picker visibility and connect behaviour.
     connect(m_manager, &VpnManager::accountTypeReady, this, [this](AccountType type)
@@ -1302,7 +1301,7 @@ void VpnPage::buildPortRow(QWidget* parent, QVBoxLayout* layout)
     layout->addWidget(m_portRow, 0, Qt::AlignCenter);
 }
 
-// Builds the warnings area (pre-release / Flatpak / AppImage banners) plus its
+// Builds the warnings area (pre-release / Flatpak banners) plus its
 // header and "Clear All" button. Lives at the bottom of the scroll content in
 // narrow mode; applyWideMode() moves it into the picker sidebar.
 void VpnPage::buildBannerArea(QVBoxLayout* scrollLayout)
@@ -1333,10 +1332,6 @@ void VpnPage::buildBannerArea(QVBoxLayout* scrollLayout)
         if (m_flatpakBetaBanner != nullptr)
         {
             m_flatpakBetaBanner->dismiss();
-        }
-        if (m_appImageBetaBanner != nullptr)
-        {
-            m_appImageBetaBanner->dismiss();
         }
     });
     bannerHeaderLayout->addWidget(m_warningsHeaderLabel);
@@ -1774,24 +1769,10 @@ void VpnPage::checkFlatpakBetaBanner()
     updateBannerAreaVisibility();
 }
 
-void VpnPage::checkAppImageBetaBanner()
-{
-    m_appImageBetaBanner = AppImageBetaBanner::createIfAppImage(this);
-    if (m_appImageBetaBanner == nullptr) return;
-    connect(m_appImageBetaBanner, &AppImageBetaBanner::dismissed, this, [this]()
-    {
-        m_appImageBetaBanner = nullptr;
-        updateBannerAreaVisibility();
-    });
-    m_vpnBannerLayout->addWidget(m_appImageBetaBanner);
-    updateBannerAreaVisibility();
-}
-
 void VpnPage::updateBannerAreaVisibility()
 {
-    const int count = (m_prereleaseBanner   != nullptr ? 1 : 0)
-                    + (m_flatpakBetaBanner  != nullptr ? 1 : 0)
-                    + (m_appImageBetaBanner != nullptr ? 1 : 0);
+    const int count = (m_prereleaseBanner  != nullptr ? 1 : 0)
+                    + (m_flatpakBetaBanner != nullptr ? 1 : 0);
     const bool hasAny = count > 0;
     m_vpnBannerArea->setVisible(hasAny);
     if (m_warningsHeaderLabel != nullptr)

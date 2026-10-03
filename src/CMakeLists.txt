@@ -60,7 +60,6 @@ set(SOURCES
         mainWindow.cpp
         widgets/elidaLabel.h
         widgets/infoBanner.h
-        widgets/appImageBetaBanner.h
         widgets/flatpakBetaBanner.h
         widgets/numberSpinner.h
         widgets/pickerBase.h

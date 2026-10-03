@@ -13,7 +13,6 @@
 #include "../widgets/pickerBase.h"
 #include "../widgets/pickerDrawer.h"
 #include "../widgets/infoBanner.h"
-#include "../widgets/appImageBetaBanner.h"
 #include "../widgets/flatpakBetaBanner.h"
 #include "../dialogs/errorDetailsDialog.h"
 
@@ -233,7 +232,6 @@ private:
     InfoBanner*     m_versionBanner = nullptr;
     InfoBanner*     m_prereleaseBanner = nullptr;
     FlatpakBetaBanner*  m_flatpakBetaBanner  = nullptr;
-    AppImageBetaBanner* m_appImageBetaBanner = nullptr;
     QTimer*         m_elapsedTimer;
     QTimer*         m_checkingSpinnerTimer;
     // Monotonic reference for the connection duration display; the label is
@@ -278,7 +276,6 @@ private:
     void updateDrawerNotchIcon();
     void checkPrereleaseBanner();
     void checkFlatpakBetaBanner();
-    void checkAppImageBetaBanner();
     void updateBannerAreaVisibility();
     void applyFreeUserMode() const;
     void startNatPmpLoop();
