@@ -216,15 +216,19 @@ for _wayland_dir in \
         cp "${_wayland_dir}/libqwayland.so" "${APPDIR}/usr/plugins/platforms/"
         info "Bundled Wayland platform plugin (${_wayland_dir})"
 
-        # Core glibc libraries (libc, ld-linux, libpthread, etc.) are excluded:
-        # these must come from the host system at runtime, never from the
-        # AppImage, matching linuxdeploy's own excludelist. Bundling libc.so.6
-        # ties the AppImage to the CI runner's glibc build (e.g. its compiled
-        # CPU baseline), breaking it on hosts with an older/different CPU.
-        _glibc_excludelist='^(ld-linux(-x86-64)?\.so\.2|ld-linux-aarch64\.so\.1|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*)$'
+        # Libraries that must come from the host system at runtime are skipped,
+        # matching linuxdeploy's own excludelist:
+        #   - Core glibc (libc, ld-linux, libpthread, etc.): bundling libc.so.6
+        #     ties the AppImage to the CI runner's glibc build (e.g. its compiled
+        #     CPU baseline), breaking it on hosts with an older/different CPU.
+        #   - fontconfig and freetype: a bundled fontconfig older than the host
+        #     cannot parse the host's /etc/fonts config, so it prints a wall of
+        #     warnings and drops the generic families (sans-serif, monospace,
+        #     emoji), which changes font fallback.
+        _host_excludelist='^(ld-linux(-x86-64)?\.so\.2|ld-linux-aarch64\.so\.1|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*|libfontconfig\.so\.1|libfreetype\.so\.6)$'
         while IFS= read -r _dep; do
             _dep_name=$(basename "${_dep}")
-            if [[ "${_dep_name}" =~ ${_glibc_excludelist} ]]; then
+            if [[ "${_dep_name}" =~ ${_host_excludelist} ]]; then
                 continue
             fi
             if [[ -f "${_dep}" && ! -f "${APPDIR}/usr/lib/${_dep_name}" ]]; then

@@ -54,6 +54,7 @@ set(SOURCES
         cli/statusMonitor.cpp
         cli/appImageUtils.h
         cli/cliNoiseFilter.h
+        cli/logRedaction.h
         cli/flatpakUtils.h
         cli/platformUtils.h
         mainWindow.h

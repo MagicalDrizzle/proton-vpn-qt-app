@@ -8,7 +8,6 @@
 #include <QLockFile>
 #include <QLocale>
 #include <QMessageBox>
-#include <QStandardPaths>
 #include <QStyleFactory>
 #include <QSysInfo>
 #include <QSystemTrayIcon>
@@ -76,7 +75,7 @@ int main(int argc, char* argv[])
     DBG_APP(QStringLiteral("Kernel             : ") + QSysInfo::kernelVersion());
     DBG_APP(QStringLiteral("CPU arch           : ") + QSysInfo::currentCpuArchitecture());
     DBG_APP(QStringLiteral("Locale             : ") + QLocale::system().name());
-    DBG_APP(QStringLiteral("Config dir         : ") + QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
+    DBG_APP(QStringLiteral("Config dir         : ") + AppConfig::configDir());
     DBG_APP(QStringLiteral("================================="));
 
     AppConfig::instance().logLoadedConfig();

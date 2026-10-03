@@ -184,6 +184,23 @@ QPushButton#secondaryButton:hover {
     color: #1a1a2e;
 }
 
+/*  Main button of a dialog (About's Close). Mirrors how Breeze draws a dialog
+    button, so builds running under Fusion (the AppImage) look the same.  */
+QPushButton#dialogButton {
+    background-color: rgba(109, 74, 255, 0.15);
+    color: palette(button-text);
+    border: 1px solid #9a84fd;
+    border-radius: 4px;
+    padding: 6px 12px;
+}
+QPushButton#dialogButton:hover {
+    background-color: rgba(109, 74, 255, 0.25);
+    border-color: #6d4aff;
+}
+QPushButton#dialogButton:pressed {
+    background-color: rgba(109, 74, 255, 0.35);
+}
+
 /* Floating overlay variant – same look as secondaryButton but with a solid
    page-color background so content scrolling underneath is hidden. */
 QPushButton#refreshOverlayButton {

@@ -325,15 +325,19 @@ for _wayland_dir in \
         info "Bundled Wayland platform plugin (${_wayland_dir})"
 
         # Copy shared library dependencies of libqwayland.so not already bundled.
-        # Core glibc libraries (libc, ld-linux, libpthread, etc.) are excluded:
-        # these must come from the host system at runtime, never from the
-        # AppImage, matching linuxdeploy's own excludelist. Bundling libc.so.6
-        # ties the AppImage to the CI runner's glibc build (e.g. its compiled
-        # CPU baseline), breaking it on hosts with an older/different CPU.
-        _glibc_excludelist='^(ld-linux(-x86-64)?\.so\.2|ld-linux-aarch64\.so\.1|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*)$'
+        # Libraries that must come from the host system at runtime are skipped,
+        # matching linuxdeploy's own excludelist:
+        #   - Core glibc (libc, ld-linux, libpthread, etc.): bundling libc.so.6
+        #     ties the AppImage to the CI runner's glibc build (e.g. its compiled
+        #     CPU baseline), breaking it on hosts with an older/different CPU.
+        #   - fontconfig and freetype: a bundled fontconfig older than the host
+        #     cannot parse the host's /etc/fonts config, so it prints a wall of
+        #     warnings and drops the generic families (sans-serif, monospace,
+        #     emoji), which changes font fallback.
+        _host_excludelist='^(ld-linux(-x86-64)?\.so\.2|ld-linux-aarch64\.so\.1|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*|libfontconfig\.so\.1|libfreetype\.so\.6)$'
         while IFS= read -r _dep; do
             _dep_name=$(basename "${_dep}")
-            if [[ "${_dep_name}" =~ ${_glibc_excludelist} ]]; then
+            if [[ "${_dep_name}" =~ ${_host_excludelist} ]]; then
                 continue
             fi
             if [[ -f "${_dep}" && ! -f "${APPDIR}/usr/lib/${_dep_name}" ]]; then
@@ -447,6 +451,9 @@ fi
 #             Python dist-packages (for gi, which was bundled from the system).
 # The bundled Python uses its own RPATH-resolved OpenSSL; no LD_LIBRARY_PATH
 # manipulation is needed.
+# sys.argv[0] is set because the CLI names itself after it: under "python -c"
+# it would otherwise be "-c", which then appears in the CLI's own messages
+# ("Please sign in with '-c signin'").
 cat > "${CLI_DIR}/protonvpn" << EOF
 #!/bin/bash
 PROTON_DIR="\${APPDIR}/usr/share/protonvpn"
@@ -454,7 +461,7 @@ export PYTHONHOME="\${PROTON_DIR}/python"
 VENV_SITE="\${PROTON_DIR}/venv/lib/${PY_VER}/site-packages"
 PROTON_PKG="\${PROTON_DIR}/dist-packages"
 export PYTHONPATH="\${PROTON_PKG}:\${VENV_SITE}"
-exec "\${PROTON_DIR}/python/bin/python${SYSTEM_PY_VER}" -c "from proton.vpn.cli import main; main()" "\$@"
+exec "\${PROTON_DIR}/python/bin/python${SYSTEM_PY_VER}" -c "import sys; sys.argv[0] = 'protonvpn'; from proton.vpn.cli import main; main()" "\$@"
 EOF
 chmod +x "${CLI_DIR}/protonvpn"
 

@@ -10,19 +10,21 @@
 
 namespace
 {
+QString configFile() { return AppConfig::configDir() + QStringLiteral("/app.json"); }
+
+constexpr int DEFAULT_RECENT_CONNECTIONS_COUNT = 5;
+} // namespace
+
+// static
 // Easy-to-change config location
 // QStandardPaths::GenericConfigLocation resolves to:
 //   - Native install : ~/.config/ProtonVPN-Qt/
 //   - Flatpak sandbox: ~/.var/app/io.github.wheat32.ProtonVPNQt/config/ProtonVPN-Qt/
-QString configDir()
+QString AppConfig::configDir()
 {
     return QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation)
            + QStringLiteral("/ProtonVPN-Qt");
 }
-QString configFile() { return configDir() + QStringLiteral("/app.json"); }
-
-constexpr int DEFAULT_RECENT_CONNECTIONS_COUNT = 5;
-} // namespace
 
 // static
 QString AppConfig::themeName(const Theme theme)

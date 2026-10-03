@@ -7,6 +7,7 @@
 
 #include "../debug.h"
 #include "cliNoiseFilter.h"
+#include "logRedaction.h"
 #include "flatpakUtils.h"
 #include "statusMonitor.h"
 
@@ -67,39 +68,6 @@ bool hasCliErrorLine(const QString& combined)
         if (l.contains(QLatin1String("incorrect login"))) return true;
     }
     return false;
-}
-
-// Masks all but the first character of the account name. Log files are routinely
-// attached to bug reports, so the account they were produced with should not be
-// readable in them.
-QString redactUsername(const QString& username)
-{
-    if (username.isEmpty()) return QStringLiteral("(empty)");
-
-    const int atPos = username.indexOf(QLatin1Char('@'));
-    const QString local  = (atPos >= 0) ? username.left(atPos) : username;
-    const QString domain = (atPos >= 0) ? username.mid(atPos)  : QString();
-    return local.left(1)
-           + QString(qMax(0, static_cast<int>(local.size()) - 1), QLatin1Char('*'))
-           + domain;
-}
-
-// Masks account names inside captured CLI output before it reaches the log.
-// `protonvpn info` prints "Account: 'name@example.com'", which would otherwise
-// be written verbatim into any log file the user shares.
-QString redactCliOutput(const QString& text)
-{
-    static const QRegularExpression accountRe(QStringLiteral(R"(Account:\s*'([^']*)')"));
-
-    QString result = text;
-    QRegularExpressionMatchIterator it = accountRe.globalMatch(text);
-    while (it.hasNext())
-    {
-        const QRegularExpressionMatch m = it.next();
-        result.replace(m.captured(0),
-                       QStringLiteral("Account: '%1'").arg(redactUsername(m.captured(1))));
-    }
-    return result;
 }
 } // namespace
 
@@ -178,11 +146,11 @@ void VpnManager::runCommand(const QStringList& args,
                              : QStringLiteral(" [exit=") + QString::number(exitCode) + QStringLiteral("]")));
                 if (out.isEmpty() == false)
                 {
-                    DBG_CLI(QStringLiteral("    stdout: ") + redactCliOutput(out));
+                    DBG_CLI(QStringLiteral("    stdout: ") + LogRedaction::cliOutput(out));
                 }
                 if (err.isEmpty() == false)
                 {
-                    DBG_CLI(QStringLiteral("    stderr: ") + redactCliOutput(err));
+                    DBG_CLI(QStringLiteral("    stderr: ") + LogRedaction::cliOutput(err));
                 }
                 callback(exitCode, out, err);
                 process->deleteLater();
@@ -313,7 +281,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
 
 void VpnManager::login(const QString& username, const QString& password)
 {
-    DBG_CLI(QStringLiteral("Login attempt for user: ") + redactUsername(username));
+    DBG_CLI(QStringLiteral("Login attempt for user: ") + LogRedaction::username(username));
     // CLI flow: protonvpn signin <username>
     //   stderr: "Password: "   -> write password + '\n' to stdin
     //   stderr: "2FA Token: "  -> optional; emit twoFactorRequired()

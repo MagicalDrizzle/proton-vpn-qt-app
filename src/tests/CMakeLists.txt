@@ -75,6 +75,12 @@ add_qt_test(tst_cliNoiseFilter
     ../cli/cliNoiseFilter.h
 )
 
+#  LogRedaction (header-only)
+add_qt_test(tst_logRedaction
+    tst_logRedaction.cpp
+    ../cli/logRedaction.h
+)
+
 #  PlatformUtils (header-only)
 add_qt_test(tst_platformUtils
     tst_platformUtils.cpp

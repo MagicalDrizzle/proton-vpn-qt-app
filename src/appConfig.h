@@ -14,6 +14,9 @@ public:
 
     static AppConfig &instance();
 
+    // Directory holding app.json (differs under Flatpak, see appConfig.cpp).
+    static QString configDir();
+
     // Logs every loaded setting via DBG_SETTINGS. Split out from load() so
     // callers can control exactly when it prints relative to other startup
     // diagnostics (see main.cpp).

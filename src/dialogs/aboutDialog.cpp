@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include "../cli/platformUtils.h"
+#include <QPushButton>
 #include <QTextBrowser>
 #include <QVersionNumber>
 #include <QVBoxLayout>
@@ -181,7 +182,17 @@ AboutDialog::AboutDialog(const QString& installedCliVersion, QWidget* parent)
             tr("This software is provided as-is, without warranty of any kind. Use at your own risk.")));
     layout->addWidget(browser);
 
-    QDialogButtonBox* btns = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    // Styled from the stylesheet (#dialogButton) instead of being left to the
+    // widget style, which Breeze and Fusion (used by the AppImage) draw very
+    // differently. The button is created here rather than taken from a
+    // standard QDialogButtonBox::Close: the box polishes its own buttons as it
+    // creates them, so an object name set afterwards never picks up the QSS rule.
+    QPushButton* closeBtn = new QPushButton(tr("Close"), this);
+    closeBtn->setObjectName(QStringLiteral("dialogButton"));
+    closeBtn->setCursor(Qt::PointingHandCursor);
+
+    QDialogButtonBox* btns = new QDialogButtonBox(this);
+    btns->addButton(closeBtn, QDialogButtonBox::RejectRole);
     connect(btns, &QDialogButtonBox::rejected, this, &QDialog::accept);
     layout->addWidget(btns);
 }
