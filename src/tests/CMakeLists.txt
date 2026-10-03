@@ -119,6 +119,13 @@ add_qt_test(tst_cliTable
     ../cli/cliTable.h
 )
 
+#  ElideLabel (header-only)
+add_qt_test(tst_elideLabel
+    tst_elideLabel.cpp
+    ../widgets/elidaLabel.h
+)
+target_link_libraries(tst_elideLabel Qt6::Widgets)
+
 #  PixmapCache (header-only)
 add_qt_test(tst_pixmapCache
     tst_pixmapCache.cpp

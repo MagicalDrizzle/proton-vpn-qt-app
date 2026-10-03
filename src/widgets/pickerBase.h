@@ -9,7 +9,10 @@
 #include <QListWidget>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QScreen>
+#include <QScrollBar>
 #include <QVBoxLayout>
+#include <algorithm>
 #include "elidaLabel.h"
 #include "styleUtils.h"
 
@@ -20,7 +23,8 @@
 //   • The floating Qt::Popup frame + QListWidget plumbing.
 //   • installOnRowWidget() - recursively enables hover tracking.
 //   • Row hover / leave event-filter logic.
-//   • togglePopup() / closePopup() / resizeList() helpers.
+//   • togglePopup() / closePopup() / resizeList() helpers; the popup is
+//     sized to its rows' full text.
 // ============================================================
 class PickerBase : public QFrame
 {
@@ -164,10 +168,6 @@ protected:
             return;
         }
         resizeList();
-        const QPoint globalBottomLeft = mapToGlobal(QPoint(0, height()));
-        // Always open popup at full expanded width so it's readable even when collapsed.
-        m_popup->setFixedWidth(qMax(width(), EXPANDED_PICKER_WIDTH));
-        m_popup->move(globalBottomLeft);
         m_popup->show();
         if (m_chevron != nullptr)
         {
@@ -184,6 +184,9 @@ protected:
         }
     }
 
+    // Fits the popup to its rows - up to POPUP_MAX_VISIBLE_ROWS tall, and wide
+    // enough for every row's text (see popupWidth()) - and places it under
+    // the picker, kept on screen.
     void resizeList() const
     {
         const int count = m_list->count();
@@ -192,6 +195,55 @@ protected:
         const int listH = qMin(count, POPUP_MAX_VISIBLE_ROWS) * rowH + POPUP_LIST_BORDER;
         m_list->setFixedHeight(listH);
         m_popup->setFixedHeight(listH);
+
+        QPoint pos = mapToGlobal(QPoint(0, height()));
+        int popupW = popupWidth();
+        const QScreen* s = screen();
+        if (s != nullptr)
+        {
+            // Never wider than the screen (rows elide again then), and moved
+            // left as far as it takes to keep the right edge on screen.
+            const QRect area = s->availableGeometry();
+            popupW = std::min(popupW, area.width());
+            pos.setX(std::max(area.left(), std::min(pos.x(), area.x() + area.width() - popupW)));
+        }
+        m_popup->setFixedWidth(popupW);
+        m_popup->move(pos);
+    }
+
+    // The picker's own width - EXPANDED_PICKER_WIDTH at least, so the popup is
+    // readable from a collapsed picker - or wider when that is what it takes
+    // to show the longest row's text without eliding.
+    [[nodiscard]] int popupWidth() const
+    {
+        int widest = 0;
+        for (int i = 0; i < m_list->count(); ++i)
+        {
+            QWidget* row = m_list->itemWidget(m_list->item(i));
+            if (row == nullptr) continue;
+            row->ensurePolished();
+            // The row's layout counts its elided labels as zero wide (their
+            // size policy is Ignored), so their full text goes on top.
+            int textW = 0;
+            for (const QLabel* label : row->findChildren<QLabel*>())
+            {
+                // dynamic_cast: ElideLabel has no Q_OBJECT for qobject_cast.
+                const ElideLabel* elided = dynamic_cast<const ElideLabel*>(label);
+                if (elided != nullptr)
+                {
+                    textW += elided->fullTextWidth();
+                }
+            }
+            widest = std::max(widest, row->sizeHint().width() + textW);
+        }
+
+        m_popup->ensurePolished();
+        int chrome = 2 * (m_popup->frameWidth() + m_list->frameWidth());
+        if (m_list->count() > POPUP_MAX_VISIBLE_ROWS)
+        {
+            chrome += m_list->verticalScrollBar()->sizeHint().width();
+        }
+        return std::max({width(), EXPANDED_PICKER_WIDTH, widest + chrome});
     }
 
     void installOnRowWidget(QWidget* w)
