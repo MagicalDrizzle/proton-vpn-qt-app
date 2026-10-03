@@ -115,7 +115,7 @@ private:
     // Null when the desktop provides no system tray; every use must be guarded.
     QSystemTrayIcon* m_trayIcon = nullptr;
     QAction* m_trayConnectAction = nullptr;
-    bool m_startupAutoConnectPending = false; // fire auto-connect once on first Disconnected state
+    bool m_startupAutoConnectPending = false; // auto-connect if the first known state is Disconnected
     VpnState m_lastNotifiedState = VpnState::Unknown;
     bool m_whatsNewShown = false; // guard so we only show the dialog once per launch
 #ifdef QT_DEBUG

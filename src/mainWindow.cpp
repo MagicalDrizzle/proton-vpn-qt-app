@@ -428,11 +428,16 @@ MainWindow::MainWindow(QWidget* parent)
                 m_vpnPage->onStateChanged(state, info);
                 updateTrayIcon(state);
 
-                // Auto-connect: if we flagged a pending connect and we just confirmed
-                // the VPN is disconnected, initiate the connection now.
-                if (m_startupAutoConnectPending && state == VpnState::Disconnected)
+                // Startup auto-connect, decided by the first state the app
+                // learns: connect now if that is Disconnected; otherwise (the
+                // VPN was already up when the app started, or the user got
+                // there first) there is nothing to do. Either way the flag is
+                // spent here - left set, it would fire on the next disconnect,
+                // including one the user asked for.
+                if (m_startupAutoConnectPending == true && state != VpnState::Unknown)
                 {
                     m_startupAutoConnectPending = false;
+                    if (state != VpnState::Disconnected) return;
                     const QString serverKey = AppConfig::instance().autoConnectServer();
                     if (serverKey.isEmpty())
                     {
