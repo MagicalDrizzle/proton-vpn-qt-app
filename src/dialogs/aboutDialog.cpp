@@ -9,6 +9,7 @@
 #include <QJsonObject>
 #include <QLabel>
 #include "../cli/platformUtils.h"
+#include <QPushButton>
 #include <QTextBrowser>
 #include <QVersionNumber>
 #include <QVBoxLayout>
@@ -164,9 +165,10 @@ AboutDialog::AboutDialog(const QString& installedCliVersion, QWidget* parent)
             "<li>%6</li>"
             "<li>%7</li>"
             "<li>%8</li>"
+            "<li>%9</li>"
             "</ul>"
             "<hr/>"
-            "<p style='color:#888;font-size:small;'>%9</p>")
+            "<p style='color:#888;font-size:small;'>%10</p>")
         .arg(
             tr("Disclaimer:"),
             tr("This project is <b>not affiliated with, endorsed by, or supported by Proton AG</b> "
@@ -178,10 +180,21 @@ AboutDialog::AboutDialog(const QString& installedCliVersion, QWidget* parent)
             tr("Icons from <a href='https://icons.getbootstrap.com/'>Bootstrap Icons</a> (MIT License)"),
             tr("Country flag SVGs from <a href='https://github.com/lipis/flag-icons'>flag-icons</a>"
                " by Panayiotis Lipiridis (MIT License)"),
+            tr("Globe map data from <a href='https://www.naturalearthdata.com/'>Natural Earth</a> (public domain)"),
             tr("This software is provided as-is, without warranty of any kind. Use at your own risk.")));
     layout->addWidget(browser);
 
-    QDialogButtonBox* btns = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    // Styled from the stylesheet (#dialogButton) instead of being left to the
+    // widget style, which Breeze and Fusion (used by the AppImage) draw very
+    // differently. The button is created here rather than taken from a
+    // standard QDialogButtonBox::Close: the box polishes its own buttons as it
+    // creates them, so an object name set afterwards never picks up the QSS rule.
+    QPushButton* closeBtn = new QPushButton(tr("Close"), this);
+    closeBtn->setObjectName(QStringLiteral("dialogButton"));
+    closeBtn->setCursor(Qt::PointingHandCursor);
+
+    QDialogButtonBox* btns = new QDialogButtonBox(this);
+    btns->addButton(closeBtn, QDialogButtonBox::RejectRole);
     connect(btns, &QDialogButtonBox::rejected, this, &QDialog::accept);
     layout->addWidget(btns);
 }

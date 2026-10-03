@@ -1,8 +1,8 @@
-# AGENTS.md — ProtonVPN Qt App
+# AGENTS.md: ProtonVPN Qt App
 
 ## Architecture Overview
 
-This is a **Qt6/C++23 desktop GUI** (Linux) that wraps the `protonvpn` CLI tool. The app has **no direct VPN or network logic** — it drives everything through `QProcess` calls to the `protonvpn` command-line binary.
+This is a **Qt6/C++23 desktop GUI** (Linux) that wraps the `protonvpn` CLI tool. The app has **no direct VPN or network logic**; it drives everything through `QProcess` calls to the `protonvpn` command-line binary.
 
 ```
 MainWindow (QStackedWidget)
@@ -62,17 +62,18 @@ This transparently wraps commands with `flatpak-spawn --host` when inside a Flat
 ## Conventions
 
 - **C++23**, strict conformance (`-extensions OFF`), `#pragma once` everywhere
-- **No `.ui` files** — all layouts built programmatically in constructors
+- **No `.ui` files**: all layouts built programmatically in constructors
 - **Singletons** via `static T& instance()`: `AppConfig`, `ConnectionHistory`
 - **Logging**: use `DBG_APP(msg)`, `DBG_CLI(msg)`, `DBG_SETTINGS(msg)` macros (stdout, tagged+timestamped). Never use `qDebug()`.
 - **Versioning**: single source of truth is `src/version.json` (keys: `app_version`, `cli_version_tested_min`, `cli_version_tested_max`); read at runtime via embedded resource `:/version.json`
 - **Palette**: dark Proton-branded theme set in `main.cpp` (`bg #1a1a2e`, accent purple `#6d4aff`)
 - **Translations**: Qt Linguist, source file `i18n/proton_vpn_qt_en.ts`; UI strings use `tr()` or `QCoreApplication::translate()`
-- **Language**: American English only — variable names, comments, and default/fallback text strings (e.g. `color` not `colour`, `canceled` not `cancelled`, `initialize` not `initialise`)
+- **Language**: American English only: variable names, comments, and default/fallback text strings (e.g. `color` not `colour`, `canceled` not `cancelled`, `initialize` not `initialise`)
+- **No em dashes**: never write the em dash (U+2014, including the `\u2014` escape) in UI strings, code comments, or documentation. Use a comma, colon, semicolon, parentheses, or a separate sentence instead; in code comments a spaced hyphen (` - `) is also fine, matching the existing code. The one exception is a lone dash shown as an empty-value placeholder (e.g. the Account page's unknown plan).
 
 ### Code Style
 
-- **No if-init syntax**: do not use `if (init; condition)` — declare the variable on a separate line before the `if`:
+- **No if-init syntax**: do not use `if (init; condition)`; declare the variable on a separate line before the `if`:
   ```cpp
   // OK
   QHBoxLayout* hl = qobject_cast<QHBoxLayout*>(layout());
@@ -82,7 +83,7 @@ This transparently wraps commands with `flatpak-spawn --host` when inside a Flat
   if (auto* hl = qobject_cast<QHBoxLayout*>(layout()); hl != nullptr) { ... }
   ```
 - **Constant placement**: declare `constexpr` constants above the function or class that uses them, not inside function bodies. For `.cpp` files use an anonymous namespace; for class-scope constants use `static constexpr` members. For header-only free functions where an anonymous namespace is inappropriate (Clang-Tidy warns), use a named inner namespace (e.g. `namespace Detail`) or promote them to class-scope `static constexpr` members if a class is nearby.
-- **Magic numbers**: never use numeric literals inline — define named constants using `constexpr` (or `static constexpr` at class scope) with `UPPER_SNAKE_CASE` names:
+- **Magic numbers**: never use numeric literals inline; define named constants using `constexpr` (or `static constexpr` at class scope) with `UPPER_SNAKE_CASE` names:
   ```cpp
   // OK
   constexpr int SIDEBAR_WIDTH = 64;
@@ -92,11 +93,11 @@ This transparently wraps commands with `flatpak-spawn --host` when inside a Flat
   // Not OK
   m_sidebar->setFixedWidth(64);
   ```
-  String and boolean literals are exempt. Enumerators (which already have names) are also exempt. The literal `0` is also generally exempt when used as a neutral zero (e.g. empty margins, start indices, zero spacing) — only name it when `0` carries domain-specific meaning (e.g. "feature disabled" sentinel).
+  String and boolean literals are exempt. Enumerators (which already have names) are also exempt. The literal `0` is also generally exempt when used as a neutral zero (e.g. empty margins, start indices, zero spacing). Only name it when `0` carries domain-specific meaning (e.g. "feature disabled" sentinel).
 
-- **Brace style**: GNU/Allman — opening brace on its own line for functions, classes, and control structures
+- **Brace style**: GNU/Allman (opening brace on its own line for functions, classes, and control structures)
 - **`auto`**: avoid for simple/obvious types; use explicit types (e.g. `int count = 0;`, `QString name = ...`). `auto` is acceptable where the type is verbose or deduced from a template (e.g. range-for over complex containers, structured bindings)
-- **Loop bodies**: ALL loops (`for`, `while`) must use curly braces — no single-line unbraced loops, no exceptions
+- **Loop bodies**: ALL loops (`for`, `while`) must use curly braces. No single-line unbraced loops, no exceptions
 - **No `do`/`while` loops**: use a `while` loop instead
 - **`switch` case bodies**: `case` labels are indented one level inside the `switch` block; the body always starts on the next line after the label:
   ```cpp
@@ -118,27 +119,27 @@ This transparently wraps commands with `flatpak-spawn --host` when inside a Flat
   // Not OK
   case VpnState::Connected: handleConnected(); break;
   ```
-- **Boolean negation**: use `== false` instead of `!` in conditions — `if (ok == false)` not `if (!ok)`. Likewise prefer `== true` when it improves clarity over a bare identifier.
-- **Pointer null checks**: always use `== nullptr` or `!= nullptr` explicitly — never rely on implicit pointer-to-bool conversion (`if (ptr)` or `if (!ptr)`).
-- **Condition bodies**: `if`/`else` bodies must use curly braces **unless** the body is a bare `return;` (void), `return true;`/`return false;` (boolean), `break;`, or `continue;`, in which case the body may appear on the same line as the condition without braces. Everything else — including assignments, function calls, and any other return expression — must use curly braces:
+- **Boolean negation**: use `== false` instead of `!` in conditions: `if (ok == false)` not `if (!ok)`. Likewise prefer `== true` when it improves clarity over a bare identifier.
+- **Pointer null checks**: always use `== nullptr` or `!= nullptr` explicitly; never rely on implicit pointer-to-bool conversion (`if (ptr)` or `if (!ptr)`).
+- **Condition bodies**: `if`/`else` bodies must use curly braces **unless** the body is a bare `return;` (void), `return true;`/`return false;` (boolean), `break;`, or `continue;`, in which case the body may appear on the same line as the condition without braces. Everything else (including assignments, function calls, and any other return expression) must use curly braces:
   ```cpp
-  // OK — bare void/boolean return, break, or continue, same line
+  // OK: bare void/boolean return, break, or continue, same line
   if (ok == false) return;
   if (m_value == value) return;
   if (found == false) return false;
   if (done) break;
   if (skip) continue;
 
-  // Not OK — must use braces
+  // Not OK: must use braces
   if (x) doSomething();                  // function call
   if (x) return m_value;                 // non-boolean return expression
   ```
 
 ## Testing
 
-Tests live in `src/tests/` and use **Qt Test** (`QtTest/QtTest`). Each test file maps to one logical unit — the naming convention is `tst_<unit>.cpp`.
+Tests live in `src/tests/` and use **Qt Test** (`QtTest/QtTest`). Each test file maps to one logical unit; the naming convention is `tst_<unit>.cpp`.
 
-**When to write tests:** write a test for any class/function that has pure or near-pure logic — parsers, data models, config helpers, utility functions. Do **not** try to test `QWidget` subclasses or `VpnManager` (subprocess-dependent); those are integration-level and are not tested here.
+**When to write tests:** write a test for any class/function that has pure or near-pure logic: parsers, data models, config helpers, utility functions. Do **not** try to test `QWidget` subclasses or `VpnManager` (subprocess-dependent); those are integration-level and are not tested here.
 
 **How to register a new test:**
 
@@ -153,7 +154,7 @@ Tests live in `src/tests/` and use **Qt Test** (`QtTest/QtTest`). Each test file
    ```
 3. If the unit needs extra Qt modules (e.g. `Qt6::Gui`), add them with a separate `target_link_libraries` call after `add_qt_test`.
 
-**Test structure** — one `QObject` subclass per file, test slots in `private slots:`, `QTEST_MAIN` + `.moc` include at the bottom:
+**Test structure**: one `QObject` subclass per file, test slots in `private slots:`, `QTEST_MAIN` + `.moc` include at the bottom:
 
 ```cpp
 #include <QtTest/QtTest>
@@ -185,5 +186,5 @@ QTEST_MAIN(TstMyUnit)
 
 ## Signals Pattern
 
-`VpnManager` emits typed signals; pages connect to them in `MainWindow`'s constructor. Pages **never** call `protonvpn` directly — all actions go through `VpnManager`.
+`VpnManager` emits typed signals; pages connect to them in `MainWindow`'s constructor. Pages **never** call `protonvpn` directly; all actions go through `VpnManager`.
 

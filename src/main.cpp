@@ -8,11 +8,12 @@
 #include <QLockFile>
 #include <QLocale>
 #include <QMessageBox>
-#include <QStandardPaths>
 #include <QStyleFactory>
 #include <QSysInfo>
+#include <QSystemTrayIcon>
 #include <QTranslator>
 #include "appConfig.h"
+#include "motionPreference.h"
 #include "cli/appImageUtils.h"
 #include "cli/flatpakUtils.h"
 #include "cli/platformUtils.h"
@@ -75,10 +76,26 @@ int main(int argc, char* argv[])
     DBG_APP(QStringLiteral("Kernel             : ") + QSysInfo::kernelVersion());
     DBG_APP(QStringLiteral("CPU arch           : ") + QSysInfo::currentCpuArchitecture());
     DBG_APP(QStringLiteral("Locale             : ") + QLocale::system().name());
-    DBG_APP(QStringLiteral("Config dir         : ") + QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation));
+    DBG_APP(QStringLiteral("Config dir         : ") + AppConfig::configDir());
     DBG_APP(QStringLiteral("================================="));
 
     AppConfig::instance().logLoadedConfig();
+
+    // Use Breeze style on KDE Plasma if available, else Fusion
+    const QStringList availableStyles = QStyleFactory::keys();
+    if (availableStyles.contains(QStringLiteral("Breeze"), Qt::CaseInsensitive))
+    {
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Breeze")));
+    }
+    else if (availableStyles.contains(QStringLiteral("Fusion"), Qt::CaseInsensitive))
+    {
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    }
+
+    // Apply theme (palette + stylesheet) based on saved preference. Done
+    // before the startup checks below so their message boxes match the app
+    // rather than showing Qt's default look (light, with stock buttons).
+    ThemeManager::apply(AppConfig::instance().theme());
 
     // Single-instance guard - prevent multiple copies running at the same time.
     const QString lockPath = QDir::tempPath() + QStringLiteral("/proton-vpn-qt-app.lock");
@@ -118,20 +135,9 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Use Breeze style on KDE Plasma if available, else Fusion
-    const QStringList availableStyles = QStyleFactory::keys();
-    if (availableStyles.contains(QStringLiteral("Breeze"), Qt::CaseInsensitive))
-    {
-        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Breeze")));
-    }
-    else if (availableStyles.contains(QStringLiteral("Fusion"), Qt::CaseInsensitive))
-    {
-        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
-    }
-
-    // Apply theme (palette + stylesheet) based on saved preference.
-    // This replaces the former hard-coded dark palette block.
-    ThemeManager::apply(AppConfig::instance().theme());
+    // Asks the desktop for its reduce-motion preference now, so the answer is
+    // in before the VPN page decides whether to show its globe.
+    MotionPreference::instance().start();
 
     // Run one-time upgrade migrations before the main window is constructed.
     // lastSeenVersion() still holds the previous version at this point.
@@ -162,12 +168,19 @@ int main(int argc, char* argv[])
         DBG_APP(QStringLiteral("D-Bus: cannot connect to session bus - VPN status will not be exposed"));
     }
 
-    if (AppConfig::instance().startHidden())
+    // Starting hidden is only safe when a tray icon exists to restore the
+    // window from; otherwise the app would be running with no way to reach it.
+    if (AppConfig::instance().startHidden() && QSystemTrayIcon::isSystemTrayAvailable())
     {
         w.hide();
     }
     else
     {
+        if (AppConfig::instance().startHidden())
+        {
+            DBG_APP(QStringLiteral("start_hidden is set but no system tray is available - "
+                                   "showing the window instead."));
+        }
         w.show();
     }
     return QApplication::exec();

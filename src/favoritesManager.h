@@ -38,7 +38,7 @@ public:
     void toggle(const QString& countryCode, const QString& countryName, const QString& city);
 
     // Returns true if there are any saved favorites.
-    [[nodiscard]] bool hasAnyEntries() const { return !m_entries.isEmpty(); }
+    [[nodiscard]] bool hasAnyEntries() const { return m_entries.isEmpty() == false; }
 
     // Remove all favorites and persist.
     void clear();

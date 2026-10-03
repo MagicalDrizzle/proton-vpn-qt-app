@@ -69,6 +69,8 @@ UpdateAvailableDialog::UpdateAvailableDialog(const QString& currentVersion,
     connect(laterBtn, &QPushButton::clicked, this, &QDialog::reject);
 
     QPushButton* downloadBtn = new QPushButton(tr("Download"), this);
+    downloadBtn->setObjectName(QStringLiteral("dialogButton"));
+    downloadBtn->setCursor(Qt::PointingHandCursor);
     downloadBtn->setDefault(true);
     connect(downloadBtn, &QPushButton::clicked, this, [this]()
     {

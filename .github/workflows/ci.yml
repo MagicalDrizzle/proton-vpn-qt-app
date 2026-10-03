@@ -40,7 +40,7 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-binary-ci
+          name: native-binary-x86_64-ci
           path: build/proton_vpn_qt
           retention-days: 7
 
@@ -110,8 +110,79 @@ jobs:
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flatpak-ci
+          name: flatpak-x86_64-ci
           path: io.github.wheat32.ProtonVPNQt.flatpak
+          retention-days: 7
+
+  # ARM64 counterpart of build-flatpak, on a native ARM runner (no emulation).
+  build-flatpak-arm64:
+    name: Build Flatpak ARM64 (Ubuntu)
+    runs-on: ubuntu-26.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Flatpak tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder
+
+      - name: Add flathub remote
+        run: |
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Resolve latest KDE runtime version
+        id: kde
+        run: |
+          latest=$(flatpak remote-ls --user --runtime --arch=aarch64 --columns=ref flathub \
+            | grep "^runtime/org.kde.Platform/aarch64/" \
+            | sed 's|runtime/org.kde.Platform/aarch64/||' \
+            | grep -E '^[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -1)
+          if [[ -z "$latest" ]]; then
+            echo "::error::Could not resolve the latest aarch64 org.kde.Platform version from Flathub."
+            exit 1
+          fi
+          echo "Resolved KDE runtime version: $latest"
+          echo "version=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Patch manifest runtime-version
+        run: |
+          sed -i "s/^runtime-version:.*/runtime-version: '${{ steps.kde.outputs.version }}'/" \
+            io.github.wheat32.ProtonVPNQt.yml
+
+      - name: Install KDE runtime and SDK
+        run: |
+          flatpak install --user --noninteractive flathub \
+            org.kde.Platform/aarch64/${{ steps.kde.outputs.version }} \
+            org.kde.Sdk/aarch64/${{ steps.kde.outputs.version }}
+
+      - name: Build Flatpak
+        run: |
+          flatpak-builder \
+            --force-clean \
+            --repo=.flatpak-repo \
+            .flatpak-build \
+            io.github.wheat32.ProtonVPNQt.yml
+
+      - name: Export bundle
+        run: |
+          flatpak build-bundle \
+            .flatpak-repo \
+            io.github.wheat32.ProtonVPNQt-aarch64.flatpak \
+            io.github.wheat32.ProtonVPNQt
+
+      - name: Confirm bundle exists
+        run: test -f io.github.wheat32.ProtonVPNQt-aarch64.flatpak
+
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-arm64-ci
+          path: io.github.wheat32.ProtonVPNQt-aarch64.flatpak
           retention-days: 7
 
   build-appimage-standalone:
@@ -148,7 +219,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-standalone-ci
+          name: appimage-standalone-x86_64-ci
           path: dist/*-standalone-*.AppImage
           retention-days: 7
 
@@ -190,8 +261,48 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-standalone-compat-ci
+          name: appimage-standalone-compat-x86_64-ci
           path: dist/*-standalone-compat-*.AppImage
+          retention-days: 7
+
+  # ARM64 counterpart of build-appimage-standalone. Pinned to ubuntu-24.04-arm
+  # because aqt's ARM64 Qt needs glibc 2.38; see release.yml for details.
+  build-appimage-standalone-arm64:
+    name: Build AppImage Standalone ARM64 (Ubuntu 24.04)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build \
+            libgl1-mesa-dev libwayland-dev pkg-config \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1 libx11-xcb1 \
+            python3 python3-venv python3-gi python3-gi-cairo \
+            wget
+
+      - name: Build AppImage (Standalone ARM64)
+        run: |
+          chmod +x build-appimage_standalone.sh
+          ./build-appimage_standalone.sh
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+
+      - name: Confirm AppImage exists
+        run: ls dist/*-standalone-aarch64.AppImage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-standalone-arm64-ci
+          path: dist/*-standalone-aarch64.AppImage
           retention-days: 7
 
   build-appimage-lite:
@@ -228,6 +339,46 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-lite-ci
+          name: appimage-lite-x86_64-ci
           path: dist/*-lite-*.AppImage
+          retention-days: 7
+
+  # ARM64 counterpart of build-appimage-lite. Pinned to ubuntu-24.04-arm
+  # because aqt's ARM64 Qt needs glibc 2.38; see release.yml for details.
+  build-appimage-lite-arm64:
+    name: Build AppImage Lite ARM64 (Ubuntu 24.04)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build \
+            libgl1-mesa-dev libwayland-dev pkg-config \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-render0 \
+            libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 \
+            libxcb-xinerama0 libxcb-xkb1 libx11-xcb1 \
+            python3 python3-venv \
+            wget
+
+      - name: Build AppImage (Lite ARM64)
+        run: |
+          chmod +x build-appimage_lite.sh
+          ./build-appimage_lite.sh
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+
+      - name: Confirm AppImage exists
+        run: ls dist/*-lite-aarch64.AppImage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-lite-arm64-ci
+          path: dist/*-lite-aarch64.AppImage
           retention-days: 7

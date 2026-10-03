@@ -10,6 +10,9 @@ namespace ThemeManager
 
 namespace
 {
+// QColor::lightness() runs 0-255; a Window color below the middle is dark.
+constexpr int LIGHTNESS_MIDPOINT = 128;
+
 void applyDark()
 {
     QPalette palette;
@@ -91,11 +94,16 @@ bool systemIsDark()
     return QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
 #else
     // Fall back: check the system palette window background luminance.
-    return QGuiApplication::palette().color(QPalette::Window).lightness() < 128;
+    return isDark();
 #endif
 }
 
 } // anonymous namespace
+
+bool isDark()
+{
+    return QGuiApplication::palette().color(QPalette::Window).lightness() < LIGHTNESS_MIDPOINT;
+}
 
 void apply(const AppConfig::Theme theme)
 {

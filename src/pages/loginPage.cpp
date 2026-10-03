@@ -1,5 +1,5 @@
 #include "loginPage.h"
-#include "../widgets/flatpakBetaBanner.h"
+#include "../geoUtils.h"
 #include "../widgets/svgBanner.h"
 
 #include <QFile>
@@ -9,9 +9,7 @@
 #include <QJsonDocument> // Ignore unused include warning; we do use QJsonDocument
 #include <QJsonObject>
 #include <QLabel>
-#include <QPainter>
 #include <QPixmap>
-#include <QSvgRenderer>
 #include <QVersionNumber>
 
 namespace
@@ -39,12 +37,7 @@ constexpr int STACK_INDEX_TFA           = 1;
 
 QIcon svgIcon(const QString& path, const QSize& size = {SVG_ICON_SIZE, SVG_ICON_SIZE})
 {
-    QPixmap pix(size);
-    pix.fill(Qt::transparent);
-    QPainter p(&pix);
-    QSvgRenderer renderer(path);
-    renderer.render(&p);
-    return QIcon(pix);
+    return QIcon(GeoUtils::svgPixmap(path, size.width(), size.height()));
 }
 } // namespace
 
@@ -97,6 +90,8 @@ LoginPage::LoginPage(QWidget* parent)
 
     // "View Details" button
     m_errorDetailsBtn = new QPushButton(tr("View Details"), m_errorContainer);
+    m_errorDetailsBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_errorDetailsBtn->setCursor(Qt::PointingHandCursor);
     m_errorDetailsBtn->setFixedWidth(ERROR_DETAILS_BTN_WIDTH);
     connect(m_errorDetailsBtn, &QPushButton::clicked, this, [this]()
     {
@@ -109,7 +104,7 @@ LoginPage::LoginPage(QWidget* parent)
 
     m_outerLayout->addWidget(card, 0, Qt::AlignCenter);
 
-    // Banner scroll area — holds warning banners below the card.
+    // Banner scroll area - holds warning banners below the card.
     // Capped at BANNER_AREA_MAX_HEIGHT so banners can never squish the
     // login/2FA input fields when multiple warnings are visible at once.
     QWidget* bannerContainer = new QWidget(this);
@@ -128,8 +123,6 @@ LoginPage::LoginPage(QWidget* parent)
 
     // Show a banner if this is a pre-release build
     checkPrereleaseBanner();
-    checkFlatpakBetaBanner();
-    checkAppImageBetaBanner();
 }
 
 void LoginPage::buildCredsWidget()
@@ -206,6 +199,13 @@ void LoginPage::buildCredsWidget()
     connect(m_passwordEdit, &QLineEdit::returnPressed, m_loginBtn, &QPushButton::click);
     connect(m_usernameEdit, &QLineEdit::returnPressed, m_passwordEdit,
             [this](){ m_passwordEdit->setFocus(); });
+
+    // Both fields are required; submitting an empty form only produced a CLI
+    // error round-trip.
+    connect(m_usernameEdit, &QLineEdit::textChanged, this, &LoginPage::updateSignInEnabled);
+    connect(m_passwordEdit, &QLineEdit::textChanged, this, &LoginPage::updateSignInEnabled);
+    updateSignInEnabled();
+
     layout->addWidget(m_loginBtn);
 }
 
@@ -259,6 +259,7 @@ void LoginPage::buildTFAWidget()
     layout->addWidget(m_tfaSubmitBtn);
 
     m_tfaCancelBtn = new QPushButton(tr("Go Back"), m_tfaWidget);
+    m_tfaCancelBtn->setObjectName(QStringLiteral("secondaryButton"));
     m_tfaCancelBtn->setCursor(Qt::PointingHandCursor);
     connect(m_tfaCancelBtn, &QPushButton::clicked, this, [this]()
     {
@@ -284,11 +285,17 @@ void LoginPage::reset() const
     setError(QString());
     m_passwordEdit->clear();
     m_tfaEdit->clear();
-    m_loginBtn->setEnabled(true);
     m_loginBtn->setText(tr("Sign In"));
+    updateSignInEnabled();
     m_usernameEdit->setEnabled(true);
     m_passwordEdit->setEnabled(true);
     m_togglePasswordBtn->setEnabled(true);
+}
+
+void LoginPage::updateSignInEnabled() const
+{
+    m_loginBtn->setEnabled(m_usernameEdit->text().trimmed().isEmpty() == false
+                           && m_passwordEdit->text().isEmpty() == false);
 }
 
 void LoginPage::setError(const QString& error) const
@@ -321,7 +328,14 @@ void LoginPage::setLoading(const bool loading) const
 {
     if (m_stack->currentIndex() == STACK_INDEX_CREDS)
     {
-        m_loginBtn->setEnabled(loading == false);
+        if (loading == true)
+        {
+            m_loginBtn->setEnabled(false);
+        }
+        else
+        {
+            updateSignInEnabled();
+        }
         m_loginBtn->setText(loading == true ? tr("Signing in\u2026") : tr("Sign In"));
         m_usernameEdit->setEnabled(loading == false);
         m_passwordEdit->setEnabled(loading == false);
@@ -371,30 +385,6 @@ void LoginPage::checkPrereleaseBanner()
         m_prereleaseBanner = nullptr;
     });
     m_bannerLayout->addWidget(m_prereleaseBanner);
-    m_bannerScrollArea->setVisible(true);
-}
-
-void LoginPage::checkFlatpakBetaBanner()
-{
-    m_flatpakBetaBanner = FlatpakBetaBanner::createIfFlatpak(this);
-    if (m_flatpakBetaBanner == nullptr) return;
-    connect(m_flatpakBetaBanner, &FlatpakBetaBanner::dismissed, this, [this]()
-    {
-        m_flatpakBetaBanner = nullptr;
-    });
-    m_bannerLayout->addWidget(m_flatpakBetaBanner);
-    m_bannerScrollArea->setVisible(true);
-}
-
-void LoginPage::checkAppImageBetaBanner()
-{
-    m_appImageBetaBanner = AppImageBetaBanner::createIfAppImage(this);
-    if (m_appImageBetaBanner == nullptr) return;
-    connect(m_appImageBetaBanner, &AppImageBetaBanner::dismissed, this, [this]()
-    {
-        m_appImageBetaBanner = nullptr;
-    });
-    m_bannerLayout->addWidget(m_appImageBetaBanner);
     m_bannerScrollArea->setVisible(true);
 }
 

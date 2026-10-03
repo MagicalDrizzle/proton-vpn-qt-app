@@ -35,11 +35,15 @@ ErrorDetailsDialog::ErrorDetailsDialog(const QString& errorText, QWidget* parent
 
     QHBoxLayout* btnRow = new QHBoxLayout();
     QPushButton* copyBtn = new QPushButton(tr("Copy to Clipboard"), this);
+    copyBtn->setObjectName(QStringLiteral("secondaryButton"));
+    copyBtn->setCursor(Qt::PointingHandCursor);
     connect(copyBtn, &QPushButton::clicked, this, [errorText]()
     {
         QGuiApplication::clipboard()->setText(errorText);
     });
     QPushButton* closeBtn = new QPushButton(tr("Close"), this);
+    closeBtn->setObjectName(QStringLiteral("dialogButton"));
+    closeBtn->setCursor(Qt::PointingHandCursor);
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
     btnRow->addWidget(copyBtn);
     btnRow->addStretch();

@@ -2,15 +2,17 @@
 
 #include <QCoreApplication>
 
+#include <iterator>
+
 // Shared UI helpers used across multiple source files.
 
 //  Braille spinner frames
 // Use with spinnerFrame() and kSpinnerFrameCount.
-static constexpr const char* kSpinnerFrames[] =
+inline constexpr const char* kSpinnerFrames[] =
 {
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
 };
-static constexpr int kSpinnerFrameCount = 10;
+inline constexpr int kSpinnerFrameCount = 10;
 
 // Server-feature metadata
 // Used to render per-item feature icons in city lists / location pickers.
@@ -21,7 +23,7 @@ struct FeatureMeta
     const char* tooltip;
 };
 
-static constexpr FeatureMeta kServerFeatures[] =
+inline constexpr FeatureMeta kServerFeatures[] =
 {
     // Designated initializers: C++23 feature!
     {
@@ -41,7 +43,7 @@ static constexpr FeatureMeta kServerFeatures[] =
     },
 };
 
-static constexpr int kServerFeatureCount = std::size(kServerFeatures);
+inline constexpr int kServerFeatureCount = std::size(kServerFeatures);
 
 // Returns the translated tooltip for a server feature.
 // Use this instead of accessing meta.tooltip directly so the string is
@@ -51,7 +53,7 @@ inline QString translatedFeatureTooltip(const FeatureMeta& meta)
     return QCoreApplication::translate("FeatureMeta", meta.tooltip);
 }
 
-//  Settings on/off helper
+//  Settings on/off helpers
 // Returns true for the common CLI truthy strings.
 inline bool isOnString(const QString& v)
 {
@@ -59,5 +61,11 @@ inline bool isOnString(const QString& v)
         || v == QLatin1String("true")
         || v == QLatin1String("1")
         || v == QLatin1String("enabled");
+}
+
+// "on" or "off", as the CLI's settings and the app's logs write a toggle.
+inline QString onOffString(const bool on)
+{
+    return on == true ? QStringLiteral("on") : QStringLiteral("off");
 }
 

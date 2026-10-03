@@ -33,6 +33,10 @@
         <file alias="arrow-bar-left.svg">assets/arrow-bar-left.svg</file>
         <file alias="box-arrow-up-right.svg">assets/box-arrow-up-right.svg</file>
     </qresource>
+    <qresource prefix="/globe">
+        <file alias="land.png">assets/globe/land.png</file>
+        <file alias="country_centers.json">assets/globe/country_centers.json</file>
+    </qresource>
     <qresource prefix="/">
         <file>version.json</file>
         <file>style.qss</file>

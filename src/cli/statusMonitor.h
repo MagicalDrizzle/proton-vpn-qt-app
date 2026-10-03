@@ -5,13 +5,16 @@
 // so it is easy to identify in ps/top/htop/bpftrace/journalctl traces.
 //
 // VpnManager owns one instance and connects to statusParsed() to apply state
-// changes.  The static helpers parseStatusFields() / parseCityFromServer() are
-// shared utilities for parsing `protonvpn status` output.
+// changes.  The static helpers parseStatusFields() and the parse*FromServer()
+// / parseServerName() family are shared utilities for parsing `protonvpn
+// status` output.
 #pragma once
 
 #include <QMap>
 #include <QProcess>
 #include <QString>
+
+class QTimer;
 
 class StatusMonitor : public QObject
 {
@@ -35,11 +38,24 @@ public:
 
     // Strip noise lines from `protonvpn status` output and parse all
     // "Key: Value" pairs into a map (keys are lowercased).
+    //
+    // A missing "status" key means the snapshot could not be understood (an
+    // empty read, a traceback, a hung CLI). Callers must treat that as "no new
+    // information" rather than as a disconnect - see
+    // VpnManager::applyStatusFields().
     static QMap<QString, QString> parseStatusFields(const QString& combined);
 
     // Extract the city from a server string like "US-NJ#203 in Secaucus, United States".
     // Returns an empty string if the pattern is not present.
     static QString parseCityFromServer(const QString& server);
+
+    // The server's name from the same string ("US-NJ#203"), as
+    // `protonvpn connect` takes it to connect to that exact server.
+    static QString parseServerName(const QString& server);
+
+    // The country code the server name starts with ("US" from "US-NJ#203",
+    // "DE" from "DE#42"). Empty when the name has no such prefix.
+    static QString parseCountryFromServer(const QString& server);
 
 signals:
     // Emitted once per complete `protonvpn status` snapshot (every ~15 s).
@@ -53,6 +69,7 @@ private:
     void launchProcess();
 
     QProcess* m_process      = nullptr;
+    QTimer*   m_restartTimer = nullptr; // owned; canceled by stop()
     QString   m_buffer;
     int       m_restartCount = 0;
     bool      m_stopping     = false; // set by stop() to suppress auto-restart

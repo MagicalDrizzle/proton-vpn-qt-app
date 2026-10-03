@@ -1,18 +1,21 @@
 #pragma once
 
 #include <QEvent>
-#include <QGuiApplication>
+#include <QLayout>
 #include <QPainter>
+#include <QPixmap>
 #include <QSvgRenderer>
 #include <QWidget>
+#include <tuple>
+#include "../themeManager.h"
+#include "pixmapCache.h"
 
 // SVG widget that scales to fill its parent's width up to a configurable maximum,
 // keeping a fixed aspect ratio (width / height, e.g. 4.0 for a 4:1 banner).
 // Optionally call setLightResource() to supply an alternate SVG for light themes.
 class SvgBanner : public QWidget
 {
-    static constexpr int DEFAULT_MAX_WIDTH               = 500;
-    static constexpr int LIGHT_THEME_LIGHTNESS_THRESHOLD = 128;
+    static constexpr int DEFAULT_MAX_WIDTH = 500;
 
 public:
     explicit SvgBanner(const QString& resource,
@@ -23,6 +26,12 @@ public:
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         QWidget::setMaximumWidth(DEFAULT_MAX_WIDTH);
         m_maxWidth = DEFAULT_MAX_WIDTH;
+        // sizeHint() depends on the parent's width, so the layout has to ask
+        // again whenever the parent is resized; nothing else would tell it.
+        if (parent != nullptr)
+        {
+            parent->installEventFilter(this);
+        }
     }
 
     void setMaxWidth(const int maxWidth) // In pixels
@@ -37,13 +46,14 @@ public:
     void setLightResource(const QString& resource)
     {
         m_lightRenderer = resource.isEmpty() ? nullptr : std::make_unique<QSvgRenderer>(resource);
+        // A new renderer may reuse the old one's address, which the key holds.
+        m_cache.clear();
         update();
     }
 
     [[nodiscard]] QSize sizeHint() const override
     {
-        const int parentW = (parentWidget() != nullptr) ? parentWidget()->width() : m_maxWidth;
-        const int w = qMin(parentW, m_maxWidth);
+        const int w = qMin(availableWidth(), m_maxWidth);
         return {w, qRound(w / m_aspect)};
     }
 
@@ -55,13 +65,52 @@ public:
     [[nodiscard]] bool hasHeightForWidth() const override { return true; }
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (watched == parentWidget() && event->type() == QEvent::Resize)
+        {
+            updateGeometry();
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // Width the parent can give the banner: its width less its layout's side
+    // margins, so a narrow parent shrinks the banner instead of letting it run
+    // into those margins.
+    [[nodiscard]] int availableWidth() const
+    {
+        const QWidget* parent = parentWidget();
+        if (parent == nullptr)
+        {
+            return m_maxWidth;
+        }
+        int w = parent->width();
+        if (parent->layout() != nullptr)
+        {
+            const QMargins margins = parent->layout()->contentsMargins();
+            w -= margins.left() + margins.right();
+        }
+        return w;
+    }
+
     void paintEvent(QPaintEvent*) override
     {
+        // Rendered once per size and theme and then reused: the VPN page's
+        // animated globe repaints the area behind the logo on every frame, and
+        // re-rendering the SVG each time was the bulk of that cost.
+        const qreal dpr = devicePixelRatioF();
+        QSvgRenderer* active = &activeRenderer();
+        const QPixmap& banner = m_cache.get({size(), dpr, active}, [this, dpr, active]()
+        {
+            QPixmap pixmap = blankPixmap(QSizeF(size()), dpr);
+            QPainter cachePainter(&pixmap);
+            cachePainter.setRenderHint(QPainter::Antialiasing);
+            active->render(&cachePainter, QRectF(QPointF(0, 0), QSizeF(size())));
+            cachePainter.end();
+            return pixmap;
+        });
         QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-
-        QSvgRenderer& active = activeRenderer();
-        active.render(&p, QRectF(rect()));
+        p.drawPixmap(0, 0, banner);
     }
 
     void resizeEvent(QResizeEvent* e) override
@@ -92,8 +141,7 @@ private:
     {
         if (m_lightRenderer != nullptr)
         {
-            const QColor windowColor = QGuiApplication::palette().color(QPalette::Window);
-            if (windowColor.lightness() >= LIGHT_THEME_LIGHTNESS_THRESHOLD)
+            if (ThemeManager::isDark() == false)
             {
                 return *m_lightRenderer;
             }
@@ -104,6 +152,8 @@ private:
 
     QSvgRenderer m_renderer;
     std::unique_ptr<QSvgRenderer> m_lightRenderer;
+    // By size, screen ratio and which theme's SVG it shows.
+    PixmapCache<std::tuple<QSize, qreal, const QSvgRenderer*>> m_cache;
     qreal m_aspect;
     int   m_maxWidth;
 };

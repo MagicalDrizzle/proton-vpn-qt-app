@@ -1,4 +1,7 @@
-cmake_minimum_required(VERSION 3.31)
+# 3.21 covers every current distro (Ubuntu 22.04 ships 3.22, Debian 12 ships
+# 3.25). Nothing in this project needs anything newer, and requiring a version
+# newer than the distro's blocks source builds for no benefit.
+cmake_minimum_required(VERSION 3.21)
 project(proton_vpn_qt)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -38,6 +41,14 @@ set(SOURCES
         favoritesManager.cpp
         geoUtils.h
         geoUtils.cpp
+        globe/globeMath.h
+        globe/globeRenderer.h
+        globe/globeRenderer.cpp
+        globe/countryCenters.h
+        globe/countryCenters.cpp
+        motionPreference.h
+        motionPreference.cpp
+        jsonFile.h
         uiHelpers.h
         vpnManager.h
         vpnManager.cpp
@@ -49,18 +60,26 @@ set(SOURCES
         cli/statusMonitor.h
         cli/statusMonitor.cpp
         cli/appImageUtils.h
+        cli/cliNoiseFilter.h
+        cli/cliSession.h
+        cli/cliSettings.h
+        cli/cliTable.h
+        cli/logRedaction.h
         cli/flatpakUtils.h
         cli/platformUtils.h
         mainWindow.h
         mainWindow.cpp
         widgets/elidaLabel.h
         widgets/infoBanner.h
-        widgets/appImageBetaBanner.h
-        widgets/flatpakBetaBanner.h
         widgets/numberSpinner.h
+        widgets/globeWidget.h
+        widgets/pixmapCache.h
+        widgets/globeWidget.cpp
+        widgets/gripSplitter.h
         widgets/pickerBase.h
         widgets/pickerDrawer.h
         widgets/pickerDrawer.cpp
+        widgets/styleUtils.h
         widgets/svgBanner.h
         widgets/toastNotification.h
         widgets/toggleSwitch.h
@@ -68,6 +87,8 @@ set(SOURCES
         widgets/toggleWithStatus.h
         pages/notInstalledPage.h
         pages/notInstalledPage.cpp
+        pages/cliNotRespondingPage.h
+        pages/cliNotRespondingPage.cpp
         pages/loginPage.h
         pages/loginPage.cpp
         pages/vpnPage.h
@@ -95,6 +116,11 @@ set(SOURCES
 )
 
 add_executable(proton_vpn_qt ${SOURCES})
+
+# The tree is warning-clean under these; keeping them on means it stays that way.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(proton_vpn_qt PRIVATE -Wall -Wextra)
+endif()
 
 if(Qt6LinguistTools_FOUND)
     qt_add_translations(proton_vpn_qt

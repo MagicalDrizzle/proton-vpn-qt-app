@@ -66,6 +66,18 @@ void NatPmpManager::stop()
         m_timer->deleteLater();
         m_timer = nullptr;
     }
+
+    // Kill any request still in flight. Without this its finished handler runs
+    // after the disconnect and emits portAcquired(), which puts the forwarded
+    // port row back on screen for a connection that no longer exists.
+    if (m_process != nullptr)
+    {
+        disconnect(m_process, nullptr, this, nullptr);
+        m_process->kill();
+        m_process->deleteLater();
+        m_process = nullptr;
+    }
+
     m_active        = false;
     m_forwardedPort = NO_PORT;
 }
@@ -77,10 +89,12 @@ void NatPmpManager::run()
     m_active = true;
 
     QProcess* process = new QProcess(this);
+    m_process = process;
     connect(process, &QProcess::finished,
             this, [this, process](const int exitCode, QProcess::ExitStatus)
     {
-        m_active = false;
+        m_active  = false;
+        m_process = nullptr;
         const QString out = QString::fromUtf8(process->readAllStandardOutput())
                           + QString::fromUtf8(process->readAllStandardError());
         process->deleteLater();

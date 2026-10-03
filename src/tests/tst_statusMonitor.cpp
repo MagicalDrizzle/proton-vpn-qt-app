@@ -1,9 +1,11 @@
 #include <QtTest/QtTest>
 #include "cli/statusMonitor.h"
 
-// Tests cover the two public static parsing helpers:
+// Tests cover the public static parsing helpers:
 //   StatusMonitor::parseStatusFields()
 //   StatusMonitor::parseCityFromServer()
+//   StatusMonitor::parseServerName()
+//   StatusMonitor::parseCountryFromServer()
 // These are pure-function text parsers that drive all VPN state decisions in
 // the app, making them critical to correctness.
 
@@ -47,7 +49,7 @@ private slots:
         QVERIFY(fields.contains(QStringLiteral("status")));
         QVERIFY(fields.contains(QStringLiteral("server")));
         // The original-case keys must NOT be present.
-        QVERIFY(!fields.contains(QStringLiteral("STATUS")));
+        QVERIFY(fields.contains(QStringLiteral("STATUS")) == false);
     }
 
     void parseStatusFields_valuesPreserveCase()
@@ -81,6 +83,42 @@ private slots:
     {
         const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(QString());
         QVERIFY(fields.isEmpty());
+    }
+
+    void parseStatusFields_traceback_hasNoStatusField()
+    {
+        // A crashed CLI must NOT look like a disconnect: callers key off the
+        // presence of "status" to decide whether the snapshot is usable.
+        const QString input =
+            QStringLiteral("Traceback (most recent call last):\n"
+                           "  File \"/usr/bin/protonvpn\", line 8, in <module>\n"
+                           "RuntimeError: daemon unavailable\n");
+
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+
+        QVERIFY(fields.contains(QStringLiteral("status")) == false);
+    }
+
+    void parseStatusFields_noActiveConnectionProse_synthesizesDisconnected()
+    {
+        // Some CLI versions print a sentence instead of a "Status:" line.
+        const QString input = QStringLiteral("There is no active Proton VPN connection.\n");
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+        QCOMPARE(fields.value(QStringLiteral("status")), QStringLiteral("Disconnected"));
+    }
+
+    void parseStatusFields_notConnectedProse_synthesizesDisconnected()
+    {
+        const QString input = QStringLiteral("You are not connected.\n");
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+        QCOMPARE(fields.value(QStringLiteral("status")), QStringLiteral("Disconnected"));
+    }
+
+    void parseStatusFields_explicitStatus_isNotOverwrittenBySynthesis()
+    {
+        const QString input = QStringLiteral("Status: Connected\nServer: DE#42\n");
+        const QMap<QString, QString> fields = StatusMonitor::parseStatusFields(input);
+        QCOMPARE(fields.value(QStringLiteral("status")), QStringLiteral("Connected"));
     }
 
     void parseStatusFields_noiseLines_areRemoved()
@@ -174,6 +212,51 @@ private slots:
         const QString city =
             StatusMonitor::parseCityFromServer(QStringLiteral("JP#1 in Tokyo"));
         QCOMPARE(city, QStringLiteral("Tokyo"));
+    }
+
+    //  parseServerName
+
+    void parseServerName_fullServerString_returnsName()
+    {
+        // The name is what `protonvpn connect <name>` takes to reconnect.
+        QCOMPARE(StatusMonitor::parseServerName(
+                     QStringLiteral("US-NJ#203 in Secaucus, United States")),
+                 QStringLiteral("US-NJ#203"));
+    }
+
+    void parseServerName_nameOnly_returnsName()
+    {
+        QCOMPARE(StatusMonitor::parseServerName(QStringLiteral("DE#42")), QStringLiteral("DE#42"));
+        QVERIFY(StatusMonitor::parseServerName(QString()).isEmpty());
+    }
+
+    //  parseCountryFromServer
+
+    void parseCountryFromServer_regionServer_returnsCountry()
+    {
+        QCOMPARE(StatusMonitor::parseCountryFromServer(
+                     QStringLiteral("US-NJ#203 in Secaucus, United States")),
+                 QStringLiteral("US"));
+    }
+
+    void parseCountryFromServer_plainServer_returnsCountry()
+    {
+        QCOMPARE(StatusMonitor::parseCountryFromServer(QStringLiteral("de#42 in Berlin, Germany")),
+                 QStringLiteral("DE"));
+    }
+
+    void parseCountryFromServer_dashInLocation_isIgnored()
+    {
+        // Only the name counts; a dash in the location must not be read as one.
+        QCOMPARE(StatusMonitor::parseCountryFromServer(
+                     QStringLiteral("FR#5 in Saint-Denis, France")),
+                 QStringLiteral("FR"));
+    }
+
+    void parseCountryFromServer_noPrefix_returnsEmpty()
+    {
+        QVERIFY(StatusMonitor::parseCountryFromServer(QStringLiteral("server in Nowhere")).isEmpty());
+        QVERIFY(StatusMonitor::parseCountryFromServer(QString()).isEmpty());
     }
 };
 

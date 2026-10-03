@@ -21,7 +21,8 @@ QuitDialog::QuitDialog(const bool portForwardingActive, QWidget* parent)
     : QDialog(parent)
 {
     setWindowTitle(tr("Quit ProtonVPN"));
-    setAttribute(Qt::WA_DeleteOnClose);
+    // No WA_DeleteOnClose: callers create this dialog on the stack and read its
+    // result after exec() returns, so it must not schedule its own deletion.
     setModal(true);
     setMinimumWidth(QUIT_DIALOG_MIN_WIDTH);
     setMinimumHeight(QUIT_DIALOG_MIN_HEIGHT);

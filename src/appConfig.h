@@ -11,8 +11,14 @@ class AppConfig
 {
 public:
     enum class Theme { System, Dark, Light };
+    // The VPN page's background globe: Auto follows the desktop's reduce-motion
+    // preference (see MotionPreference), On and Off override it.
+    enum class GlobeAnimation { Auto, On, Off };
 
     static AppConfig &instance();
+
+    // Directory holding app.json (differs under Flatpak, see appConfig.cpp).
+    static QString configDir();
 
     // Logs every loaded setting via DBG_SETTINGS. Split out from load() so
     // callers can control exactly when it prints relative to other startup
@@ -26,26 +32,46 @@ public:
     bool notifications() const;
     int  recentConnectionsCount() const;
     bool startHidden() const;
+    // True when closing the window hides to the tray instead of quitting.
+    bool closeToTray() const;
     Theme theme() const;
+    GlobeAnimation globeAnimation() const;
+    // Stop the globe's idle spin while the window does not have focus.
+    bool globePauseWhenUnfocused() const;
+    // Single source of truth for the GlobeAnimation <-> config-string mapping.
+    static QString globeAnimationName(GlobeAnimation value);
+    // The reverse; anything unrecognized is Auto, the default.
+    static GlobeAnimation globeAnimationFromName(const QString& name);
     bool showLocationPicker() const;
     bool showFavoritesDropdown() const;
     bool favoritesEnabled() const;
     QString lastSeenVersion() const;
     bool checkForUpdates() const;
     bool logToFile() const;
+    // Share of the width (0-1) the Countries list takes in the split view.
+    double splitViewCountriesRatio() const;
 
     void setAutoConnect(bool value);
     void setAutoConnectServer(const QString& value);
     void setNotifications(bool value);
     void setRecentConnectionsCount(int value);
     void setStartHidden(bool value);
+    void setCloseToTray(bool value);
     void setTheme(Theme value);
+    void setGlobeAnimation(GlobeAnimation value);
+    void setGlobePauseWhenUnfocused(bool value);
     void setShowLocationPicker(bool value);
     void setShowFavoritesDropdown(bool value);
     void setFavoritesEnabled(bool value);
     void setLastSeenVersion(const QString& value);
     void setCheckForUpdates(bool value);
     void setLogToFile(bool value);
+    // Clamped to [SPLIT_RATIO_MIN, SPLIT_RATIO_MAX].
+    void setSplitViewCountriesRatio(double value);
+
+    static constexpr double SPLIT_RATIO_DEFAULT = 0.4;
+    static constexpr double SPLIT_RATIO_MIN     = 0.2;
+    static constexpr double SPLIT_RATIO_MAX     = 0.7;
 
     // Resets every setting to its compile-time default and deletes the config
     // file. The in-memory state is usable immediately; the file will not be
@@ -57,12 +83,19 @@ private:
     void load();
     bool save() const;
 
+    // Single source of truth for the Theme <-> config-string mapping.
+    static QString themeName(Theme theme);
+
     bool m_autoConnect    = false;
     QString m_autoConnectServer;
     bool m_notifications  = true;
     int  m_recentConnectionsCount = 5;
     bool m_startHidden = false;
+    bool m_closeToTray = true;
+    double m_splitViewCountriesRatio = SPLIT_RATIO_DEFAULT;
     Theme m_theme = Theme::System;
+    GlobeAnimation m_globeAnimation = GlobeAnimation::Auto;
+    bool m_globePauseWhenUnfocused = false;
     bool m_showLocationPicker = true;
     bool m_showFavoritesDropdown = true;
     bool m_favoritesEnabled = true;

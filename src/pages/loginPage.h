@@ -7,8 +7,6 @@
 #include <QStackedWidget>
 #include <QVBoxLayout>
 #include "../widgets/infoBanner.h"
-#include "../widgets/appImageBetaBanner.h"
-#include "../widgets/flatpakBetaBanner.h"
 #include "../dialogs/errorDetailsDialog.h"
 
 class LoginPage : public QWidget
@@ -23,8 +21,6 @@ public:
     void show2FAPrompt() const; // called when VpnManager emits twoFactorRequired()
     void reset() const; // return to username/password view
     void checkPrereleaseBanner();
-    void checkFlatpakBetaBanner();
-    void checkAppImageBetaBanner();
 
 public slots:
     void onCliVersionReady(const QString& version);
@@ -56,17 +52,17 @@ private:
     QPushButton* m_errorDetailsBtn = nullptr;
     mutable QString m_rawError;
     QVBoxLayout* m_outerLayout = nullptr;
-    // Banner scroll area — holds all warning banners below the login card.
+    // Banner scroll area - holds all warning banners below the login card.
     // Scrollable so that multiple banners never squish the input fields.
     QScrollArea*  m_bannerScrollArea = nullptr;
     QVBoxLayout*  m_bannerLayout     = nullptr;
     InfoBanner* m_versionBanner = nullptr;
     InfoBanner* m_prereleaseBanner = nullptr;
-    FlatpakBetaBanner*   m_flatpakBetaBanner   = nullptr;
-    AppImageBetaBanner*  m_appImageBetaBanner  = nullptr;
 
     bool m_passwordVisible = false;
     void togglePasswordVisibility() const;
+    // Keeps the Sign In button disabled until both fields have content.
+    void updateSignInEnabled() const;
     void buildCredsWidget();
     void buildTFAWidget();
 };

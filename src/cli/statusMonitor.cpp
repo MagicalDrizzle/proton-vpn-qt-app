@@ -3,31 +3,53 @@
 // 15-second loop.  See statusMonitor.h for the full description.
 
 #include "statusMonitor.h"
+#include "cliNoiseFilter.h"
 #include "flatpakUtils.h"
 #include "../debug.h"
 
 #include <QTimer>
 #include <csignal>
-#include <ranges>
 #include <sys/prctl.h>
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
+namespace
+{
 // The process will appear under this name in ps/top/htop/bpftrace/journalctl.
 // Linux TASK_COMM_LEN is 16 bytes (15 usable chars); the full name is always
 // visible in /proc/PID/cmdline and `ps aux`.
-static constexpr char kProcessName[] = "protonvpn-qt-status-mon"; // NOLINT(*-avoid-c-arrays)
+constexpr char PROCESS_NAME[] = "protonvpn-qt-status-mon"; // NOLINT(*-avoid-c-arrays)
+
+// How long to wait before restarting the monitor after an unexpected exit.
+constexpr int RESTART_DELAY_MS = 5'000;
+
+// How long to wait for the subprocess to report that it started.
+constexpr int PROCESS_START_TIMEOUT_MS = 2000;
+
+// How long stop() waits for the killed monitor process to be reaped.
+// SIGKILL ends it immediately; this is only an upper bound.
+constexpr int KILL_REAP_TIMEOUT_MS = 1000;
+
+// Phrases that mean "there is no active connection" on CLI versions that print
+// a sentence instead of a "Status:" line. Recognizing them lets an otherwise
+// key-less snapshot still count as an authoritative Disconnected, so a genuinely
+// unparseable snapshot (a traceback, a hang) stays distinguishable from one.
+constexpr const char* NO_CONNECTION_PHRASES[] = {
+    "no active",
+    "not connected",
+    "no connection",
+};
 
 // Shell command run by the subprocess:
-//   1. exec -a renames the bash process to kProcessName (sets argv[0]).
+//   1. exec -a renames the bash process to PROCESS_NAME (sets argv[0]).
 //   2. The inner bash runs an infinite loop:
 //        a. `protonvpn status` (stdout + stderr merged) - or via flatpak-spawn
 //           when running inside a Flatpak sandbox.
 //        b. ASCII 0x1E (Record Separator) - unambiguous snapshot delimiter
 //        c. sleep 15
-static QString buildLoopCommand()
+QString buildLoopCommand()
 {
     // Inside a Flatpak sandbox, `protonvpn` is not available directly - it
     // must be forwarded to the host via flatpak-spawn.
@@ -43,8 +65,10 @@ static QString buildLoopCommand()
                           "done'").arg(vpnCmd);
 }
 
-// How long to wait before restarting the monitor after an unexpected exit.
-static constexpr int kRestartDelayMs = 5'000;
+// Between the server name and its location in a `protonvpn status` server
+// string: "US-NJ#203 in Secaucus, United States".
+const QString SERVER_LOCATION_SEPARATOR = QStringLiteral(" in ");
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -53,6 +77,14 @@ static constexpr int kRestartDelayMs = 5'000;
 StatusMonitor::StatusMonitor(QObject* parent)
     : QObject(parent)
 {
+    // Owned restart timer rather than a fire-and-forget singleShot: stop() has
+    // to be able to cancel a restart that is already scheduled, otherwise a
+    // stop() followed by a start() inside the delay window launches a second
+    // monitor process that nothing holds a handle to.
+    m_restartTimer = new QTimer(this);
+    m_restartTimer->setSingleShot(true);
+    m_restartTimer->setInterval(RESTART_DELAY_MS);
+    connect(m_restartTimer, &QTimer::timeout, this, &StatusMonitor::launchProcess);
 }
 
 StatusMonitor::~StatusMonitor()
@@ -80,6 +112,7 @@ void StatusMonitor::start()
 void StatusMonitor::stop()
 {
     m_stopping = true;
+    m_restartTimer->stop();
 
     if (m_process == nullptr) return;
 
@@ -89,6 +122,10 @@ void StatusMonitor::stop()
     // auto-restart after we deliberately kill the process.
     disconnect(m_process, nullptr, this, nullptr);
     m_process->kill();
+    // Collect the killed process before deleting the QProcess. Deleting one
+    // whose child has not been reaped makes Qt warn "Destroyed while process
+    // is still running" and block in the destructor until it has been.
+    m_process->waitForFinished(KILL_REAP_TIMEOUT_MS);
     m_process->deleteLater();
     m_process = nullptr;
     m_buffer.clear();
@@ -107,6 +144,8 @@ void StatusMonitor::launchProcess()
 {
     if (m_stopping)
         return;
+    if (m_process != nullptr)
+        return; // already running - never run two monitors at once
 
     m_buffer.clear();
     m_process = new QProcess(this);
@@ -132,12 +171,12 @@ void StatusMonitor::launchProcess()
     m_process->start(QStringLiteral("/bin/bash"),
                      {QStringLiteral("-c"), loopCommand});
 
-    if (m_process->waitForStarted(2000))
+    if (m_process->waitForStarted(PROCESS_START_TIMEOUT_MS))
     {
         DBG_STATUS(QStringLiteral("Process launched:"
                                "  name=\"%1\"  PID=%2  restart#=%3"
                                "  command: /bin/bash -c \"%4\"")
-                    .arg(QString::fromLatin1(kProcessName))
+                    .arg(QString::fromLatin1(PROCESS_NAME))
                     .arg(m_process->processId())
                     .arg(m_restartCount)
                     .arg(loopCommand));
@@ -186,13 +225,13 @@ void StatusMonitor::onProcessFinished(int exitCode, QProcess::ExitStatus status)
     {
         DBG_STATUS(QStringLiteral("Process was killed externally (signal termination)."
                                "  restart#=%1 - restarting in %2 ms.")
-                    .arg(m_restartCount).arg(kRestartDelayMs));
+                    .arg(m_restartCount).arg(RESTART_DELAY_MS));
     }
     else
     {
         DBG_STATUS(QStringLiteral("Process exited unexpectedly (non-zero exit):"
                                "  exitCode=%1  restart#=%2 - restarting in %3 ms.")
-                    .arg(exitCode).arg(m_restartCount).arg(kRestartDelayMs));
+                    .arg(exitCode).arg(m_restartCount).arg(RESTART_DELAY_MS));
     }
 
     m_process->deleteLater();
@@ -200,7 +239,7 @@ void StatusMonitor::onProcessFinished(int exitCode, QProcess::ExitStatus status)
     m_buffer.clear();
     ++m_restartCount;
 
-    QTimer::singleShot(kRestartDelayMs, this, &StatusMonitor::launchProcess);
+    m_restartTimer->start();
 }
 
 // ---------------------------------------------------------------------------
@@ -210,23 +249,11 @@ void StatusMonitor::onProcessFinished(int exitCode, QProcess::ExitStatus status)
 // static
 QMap<QString, QString> StatusMonitor::parseStatusFields(const QString& combined)
 {
-    QStringList lines = combined.split(QLatin1Char('\n'));
-
     // Remove noise / informational lines that are not "Key: Value" data.
-    lines.erase(std::ranges::remove_if(lines, [](const QString& l)
-    {
-        const QString ll = l.toLower();
-        return ll.contains(QLatin1String("outdated"))                          ||
-               ll.contains(QLatin1String("updating"))                          ||
-               ll.contains(QLatin1String("this may take"))                     ||
-               ll.contains(QLatin1String("to get your forwarded port"))        ||
-               ll.contains(QLatin1String("natpmpc"))                           ||
-               (ll.startsWith(QLatin1String("guide:")) &&
-                ll.contains(QLatin1String("http")));
-    }).begin(), lines.end());
+    const QStringList lines = CliNoise::strip(combined.split(QLatin1Char('\n')));
 
     QMap<QString, QString> fields;
-    for (const QString& line : std::as_const(lines))
+    for (const QString& line : lines)
     {
         const int colonPos = line.indexOf(QLatin1Char(':'));
         if (colonPos < 0) continue;
@@ -237,16 +264,54 @@ QMap<QString, QString> StatusMonitor::parseStatusFields(const QString& combined)
             fields.insert(key, value);
         }
     }
+
+    // No "Status:" line, but the output says in prose that nothing is
+    // connected: synthesize the field so callers still get an authoritative
+    // answer. Without this the snapshot would be indistinguishable from a CLI
+    // failure, which callers must ignore rather than read as "disconnected".
+    if (fields.contains(QStringLiteral("status")) == false)
+    {
+        const QString lowered = combined.toLower();
+        for (const char* phrase : NO_CONNECTION_PHRASES)
+        {
+            if (lowered.contains(QLatin1String(phrase)))
+            {
+                fields.insert(QStringLiteral("status"), QStringLiteral("Disconnected"));
+                break;
+            }
+        }
+    }
+
     return fields;
 }
 
 // static
 QString StatusMonitor::parseCityFromServer(const QString& server)
 {
-    const int inPos = server.indexOf(QStringLiteral(" in "));
+    const int inPos = server.indexOf(SERVER_LOCATION_SEPARATOR);
     if (inPos < 0)
         return {};
-    const QString rest    = server.mid(inPos + 4);
+    const QString rest    = server.mid(inPos + SERVER_LOCATION_SEPARATOR.size());
     const int    commaPos = rest.indexOf(QLatin1Char(','));
     return (commaPos >= 0 ? rest.left(commaPos) : rest).trimmed();
+}
+
+// static
+QString StatusMonitor::parseServerName(const QString& server)
+{
+    const int inPos = server.indexOf(SERVER_LOCATION_SEPARATOR);
+    return (inPos >= 0 ? server.left(inPos) : server).trimmed();
+}
+
+// static
+QString StatusMonitor::parseCountryFromServer(const QString& server)
+{
+    // The country code runs up to the first '-' (region or Secure Core
+    // entry follows) or '#' (server number follows), whichever comes first.
+    const QString name = parseServerName(server);
+    const int dashPos = name.indexOf(QLatin1Char('-'));
+    const int hashPos = name.indexOf(QLatin1Char('#'));
+    const int endPos  = (dashPos >= 0 && (hashPos < 0 || dashPos < hashPos))
+                        ? dashPos : hashPos;
+    return endPos > 0 ? name.left(endPos).toUpper() : QString();
 }

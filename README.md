@@ -13,9 +13,9 @@ A Qt GUI front-end for the [Proton VPN Linux CLI](https://protonvpn.com/support/
 ### General
 - One-click **connect / disconnect** with a large power button and system tray controls
 - Automatic connection detection on launch using `protonvpn status`, with active server and public IP display
-- **Background polling** every 15 seconds — detects external state changes (CLI disconnect, reconnect, or location switch) and updates the UI without any user action
+- **Background polling** every 15 seconds: detects external state changes (CLI disconnect, reconnect, or location switch) and updates the UI without any user action
 - Secure login with **interactive 2FA support** and inline validation
-- Confirmation dialog when quitting while the VPN is active — leave it running or disconnect cleanly
+- Confirmation dialog when quitting while the VPN is active: leave it running or disconnect cleanly
 - Single-instance protection to prevent duplicate launches
 - Proton-inspired dark theme with KDE Breeze (when available) or Fusion styling
 - Informational banners for CLI version mismatches and pre-release builds
@@ -23,15 +23,15 @@ A Qt GUI front-end for the [Proton VPN Linux CLI](https://protonvpn.com/support/
 ### Free & Plus Plan Awareness
 - Detects the user's plan (Free or Plus) at login and on launch
 - **Account page** shows plan type (Free / VPN Plus) with a direct upgrade link for Free users
-- **Countries page**: the Connect button is locked with a tooltip for Free users — Proton picks the server automatically
+- **Countries page**: the Connect button is locked with a tooltip for Free users, since Proton picks the server automatically
 - **VPN page**: location picker is disabled for Free users (forbidden cursor + tooltip); recent connections picker is hidden
 - **Settings page**: Plus-only features (NAT Type, VPN Accelerator, NetShield, Port Forwarding, Custom DNS, Recent Connections) are grouped under a `✦ Available to Plus Members` divider and rendered at reduced opacity for Free users
 
 ### Location & Country Selection *(Plus)*
 - Browse and search countries and cities with feature tags (P2P, Tor, Secure Core, etc.)
 - **Country flags** in the countries list, detected from system locale/timezone
-- **Location picker** on the main VPN page — choose the fastest server or a specific city, with country flag and feature icons
-- **Recent connections** picker — quick access to previously used locations, with configurable history depth
+- **Location picker** on the main VPN page: choose the fastest server or a specific city, with country flag and feature icons
+- **Recent connections** picker: quick access to previously used locations, with configurable history depth
 
 ### Settings
 **App tab**
@@ -40,7 +40,7 @@ A Qt GUI front-end for the [Proton VPN Linux CLI](https://protonvpn.com/support/
 - *(Plus)* Recent Connections count (0–20) and one-click history clear
 
 **VPN tab**
-- Anonymous Crash Reports, IPv6, Kill Switch — available on all plans
+- Anonymous Crash Reports, IPv6, Kill Switch: available on all plans
 - *(Plus)* NAT Type, VPN Accelerator, NetShield Ad-blocker, Port Forwarding, Custom DNS
 
 ### Port Forwarding *(Plus)*
@@ -48,14 +48,14 @@ A Qt GUI front-end for the [Proton VPN Linux CLI](https://protonvpn.com/support/
 When Port Forwarding is enabled in Settings and you are connected to a P2P server, the app automatically manages the NAT-PMP lease using `natpmpc`:
 
 - The **forwarded port number** is displayed on the main VPN page with a one-click **Copy** button for easy use with torrent clients (e.g. Transmission, qBittorrent)
-- A **keep-alive loop** runs every 45 seconds to renew the 60-second NAT-PMP lease — the port stays valid as long as the app is open
+- A **keep-alive loop** runs every 45 seconds to renew the 60-second NAT-PMP lease, so the port stays valid as long as the app is open
 - If the app is closed while port forwarding is active, the lease will lapse within 60 seconds. A warning is shown in the quit dialog when this applies
 - If `natpmpc` is not installed, a banner is shown when you connect to a P2P server with port forwarding enabled. Install it with:
   - **Debian / Ubuntu:** `sudo apt install natpmpc`
   - **Fedora:** `sudo dnf install libnatpmp`
   - **Arch:** `sudo pacman -S libnatpmp`
 
-`natpmpc` is an **optional** dependency — users who do not use port forwarding are unaffected by its absence.
+`natpmpc` is an **optional** dependency; users who do not use port forwarding are unaffected by its absence.
 
 ---
 
@@ -87,12 +87,12 @@ When Port Forwarding is enabled in Settings and you are connected to a P2P serve
 
 <table>
   <tr>
-    <td><img width="626" alt="Settings — App tab 1" src="https://github.com/user-attachments/assets/1ccab72f-c56b-4b9e-9ac6-b0da97c294e7" /></td>
-    <td><img width="626" alt="Settings — App tab 2" src="https://github.com/user-attachments/assets/acdbf5dc-e951-4fe3-b2fa-a818af4db170" /></td>
+    <td><img width="626" alt="Settings: App tab 1" src="https://github.com/user-attachments/assets/1ccab72f-c56b-4b9e-9ac6-b0da97c294e7" /></td>
+    <td><img width="626" alt="Settings: App tab 2" src="https://github.com/user-attachments/assets/acdbf5dc-e951-4fe3-b2fa-a818af4db170" /></td>
   </tr>
   <tr>
-    <td><img width="626" alt="Settings — Appearance tab" src="https://github.com/user-attachments/assets/ad0d4d5b-bf2c-4552-a53f-f713bd0ea031" /></td>
-    <td><img width="626" alt="Settings — VPN tab" src="https://github.com/user-attachments/assets/a05708fd-8e4e-4141-ab89-02dbd90a2043" /></td>
+    <td><img width="626" alt="Settings: Appearance tab" src="https://github.com/user-attachments/assets/ad0d4d5b-bf2c-4552-a53f-f713bd0ea031" /></td>
+    <td><img width="626" alt="Settings: VPN tab" src="https://github.com/user-attachments/assets/a05708fd-8e4e-4141-ab89-02dbd90a2043" /></td>
   </tr>
 </table>
 
@@ -102,10 +102,10 @@ When Port Forwarding is enabled in Settings and you are connected to a P2P serve
 
 | Dependency | Purpose |
 |---|---|
-| `protonvpn` CLI | Core VPN control — sign in, connect, disconnect, status, country/city lists, settings |
+| `protonvpn` CLI | Core VPN control: sign in, connect, disconnect, status, country/city lists, settings |
 | Qt 6 (Core, Gui, Widgets, Svg, SvgWidgets) | UI framework |
-| `curl` | **Optional** — fetches your public IP address when already connected on launch |
-| XDG autostart (`~/.config/autostart/`) | **Optional** — required for the "Launch on Startup" feature; supported by all major desktop environments |
+| `curl` | **Optional**: fetches your public IP address when already connected on launch |
+| XDG autostart (`~/.config/autostart/`) | **Optional**: required for the "Launch on Startup" feature; supported by all major desktop environments |
 
 The app communicates exclusively with the `protonvpn` CLI. `curl` degrades gracefully if absent.
 
@@ -125,13 +125,13 @@ cmake --build build --parallel
 
 The resulting binary is `build/proton_vpn_qt`.
 
-### Dependencies — Arch Linux
+### Dependencies: Arch Linux
 
 ```bash
 sudo pacman -S qt6-base qt6-svg cmake ninja
 ```
 
-### Dependencies — Ubuntu / Debian
+### Dependencies: Ubuntu / Debian
 
 ```bash
 sudo apt install qt6-base-dev qt6-svg-dev libqt6svg6-dev cmake ninja-build
@@ -216,7 +216,7 @@ gdbus introspect --session \
 
 ## Author & Credits
 
-- **Nicholas Page** ([wheat32](https://github.com/wheat32)) — author
+- **Nicholas Page** ([wheat32](https://github.com/wheat32)), author
 - Icons from [Bootstrap Icons](https://icons.getbootstrap.com/) (MIT License)
 - Built with [Qt 6](https://www.qt.io/)
 - Uses the [ProtonVPN Linux CLI](https://protonvpn.com/support/linux-vpn-tool/)

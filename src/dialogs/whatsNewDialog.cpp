@@ -77,6 +77,8 @@ WhatsNewDialog::WhatsNewDialog(const QString& version, QWidget* parent)
     });
 
     QPushButton* closeBtn = new QPushButton(tr("Got It!"), this);
+    closeBtn->setObjectName(QStringLiteral("dialogButton"));
+    closeBtn->setCursor(Qt::PointingHandCursor);
     closeBtn->setDefault(true);
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
 

@@ -4,9 +4,11 @@
 #include <QPushButton>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QTabWidget>
 #include <QVBoxLayout>
 #include <QTimer>
 #include <functional>
+#include <utility>
 #include "../vpnManager.h"
 #include "../cli/natpmpManager.h"
 #include "../dialogs/aboutDialog.h"
@@ -26,6 +28,7 @@ public:
 signals:
     void recentConnectionsCleared();
     void locationPickerVisibilityChanged(bool visible);
+    void globeSettingsChanged();
     void favoritesDropdownVisibilityChanged(bool visible);
     void favoritesEnabledChanged(bool enabled);
     void favoritesCleared();
@@ -57,6 +60,7 @@ private:
     // Custom DNS widgets
     ToggleWithStatus* m_dnsToggle = nullptr;
     QLineEdit* m_dnsEdit = nullptr;
+    QWidget* m_dnsAddrRow = nullptr; // the server field and Apply, shown while custom DNS is on
     QPushButton* m_dnsApplyBtn = nullptr;
 
     // Port forwarding toggle
@@ -88,6 +92,16 @@ private:
 
     // Theme selector combo box
     QComboBox* m_themeCombo = nullptr;
+    QComboBox* m_globeCombo = nullptr;
+    QLabel* m_globeDescLabel = nullptr;
+    ToggleWithStatus* m_globePauseToggle = nullptr;
+    // Fills m_globeCombo; "Auto" is listed only when the desktop's
+    // reduce-motion preference can be read (MotionPreference::Available).
+    // Also updates the row's description, which explains Auto only then.
+    void populateGlobeCombo();
+    // Pause When Unfocused only applies while the globe can show.
+    void updateGlobePauseToggle() const;
+    [[nodiscard]] static QString globeDescription();
 
     // Recent connections count (0 = disabled)
     class NumberSpinner* m_recentConnectionsSpinBox = nullptr;
@@ -130,6 +144,24 @@ private:
     // The VPN tab widget – watched via eventFilter to keep m_refreshBtn
     // positioned as a floating overlay in its top-right corner.
     QWidget* m_vpnTabWidget = nullptr;
+
+    // Tab builders - one per QTabWidget page, called from the constructor.
+    void buildAppTab(QTabWidget* tabs);
+    void buildAppearanceTab(QTabWidget* tabs);
+    void buildVpnTab(QTabWidget* tabs);
+    // Scroll area + "infoCard" container shared by the tabs.
+    static std::pair<QWidget*, QVBoxLayout*> makeTabCard(QWidget* tabPage);
+    // Scroll area + transparent container for a tab laid out as titled
+    // sections, each in its own card (the App and Appearance tabs).
+    static std::pair<QWidget*, QVBoxLayout*> makeSectionedTab(QWidget* tabPage);
+    // Fills a tab with a scroll area showing `content`, under the tab's own
+    // layout (the VPN tab adds its status line to that layout).
+    static void addTabScrollArea(QWidget* tabPage, QWidget* content);
+    // Adds an uppercase section title, preceded by a divider unless it is the
+    // first thing in the layout.
+    static void addSectionHeader(QWidget* parent, QVBoxLayout* layout, const QString& title);
+    // Adds an empty "infoCard" to hold one section's rows.
+    static std::pair<QWidget*, QVBoxLayout*> addSectionCard(QWidget* parent, QVBoxLayout* layout);
 
     // Helpers
     QWidget* makeToggleRow(QWidget* parent, const QString& label, const QString& desc,

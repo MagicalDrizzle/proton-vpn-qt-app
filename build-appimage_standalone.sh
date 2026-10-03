@@ -25,13 +25,17 @@
 # Requirements (install with your package manager before running):
 #   cmake, ninja-build, python3, python3-venv, python3-gi, python3-gi-cairo,
 #   wget, binutils (ar), gcc
-#   (Qt itself is fetched via aqtinstall — see below — not from the system.)
+#   (Qt itself is fetched via aqtinstall, as described below, not from the system.)
 #
 # linuxdeploy and appimagetool are downloaded automatically on first run
 # and cached in .appimage-build/tools/.
 #
+# Builds are native: the AppImage targets the CPU architecture of the machine
+# running this script (x86_64 or aarch64). CI uses a separate ARM runner for
+# the aarch64 build.
+#
 # Output:
-#   dist/ProtonVPN-Qt-<version>-x86_64.AppImage
+#   dist/ProtonVPN-Qt-<version>-standalone-<arch>.AppImage
 
 set -euo pipefail
 
@@ -44,9 +48,6 @@ APP_ID="io.github.wheat32.ProtonVPNQt"
 
 # -- Read version --------------------------------------------------------------
 VERSION=$(python3 -c "import json; print(json.load(open('${SCRIPT_DIR}/src/version.json'))['app_version'])")
-# APPIMAGE_VARIANT_SUFFIX distinguishes the ubuntu-24.04-pinned "compat" build
-# (see release.yml) from the regular build in the release artifact filename.
-OUTPUT="${OUTPUT_DIR}/ProtonVPN-Qt-${VERSION}-standalone${APPIMAGE_VARIANT_SUFFIX:+-${APPIMAGE_VARIANT_SUFFIX}}-x86_64.AppImage"
 
 # -- Color helpers -------------------------------------------------------------
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
@@ -54,11 +55,47 @@ info()  { echo -e "${GREEN}[build-appimage]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[build-appimage]${NC} $*"; }
 die()   { echo -e "${RED}[build-appimage] ERROR:${NC} $*" >&2; exit 1; }
 
+# -- Target architecture -------------------------------------------------------
+# Each upstream names the same CPU differently, so map the host architecture to
+# every naming scheme this script needs in one place.
+case "$(uname -m)" in
+    x86_64)
+        APPIMAGE_ARCH="x86_64"         # linuxdeploy / appimagetool / runtime
+        QT_HOST="linux"                # aqt host for prebuilt Qt binaries
+        QT_ARCH_PATTERN='gcc_64$'      # "linux_gcc_64" (Qt >= 6.8) or "gcc_64"
+        QT_DIR_NAME="gcc_64"           # aqt's on-disk install directory
+        MARCH="x86-64"                 # generic baseline: no AVX2 requirement
+        DEB_ARCH="amd64"               # Proton apt repo architecture section
+        MULTIARCH="x86_64-linux-gnu"   # Debian/Ubuntu library path triplet
+        PBS_ARCH_PREFIXES="'x86_64-unknown', 'x86_64_v1-unknown'"
+        ;;
+    aarch64)
+        APPIMAGE_ARCH="aarch64"
+        QT_HOST="linux_arm64"
+        QT_ARCH_PATTERN='gcc_arm64$'   # "linux_gcc_arm64"
+        QT_DIR_NAME="gcc_arm64"
+        MARCH="armv8-a"                # base ARMv8 (e.g. Raspberry Pi 4)
+        DEB_ARCH="arm64"
+        MULTIARCH="aarch64-linux-gnu"
+        PBS_ARCH_PREFIXES="'aarch64-unknown',"
+        ;;
+    *)
+        die "Unsupported architecture: $(uname -m) (supported: x86_64, aarch64)"
+        ;;
+esac
+# appimagetool reads ARCH to choose which AppImage runtime to embed.
+export ARCH="${APPIMAGE_ARCH}"
+info "Target architecture: ${APPIMAGE_ARCH}"
+
+# APPIMAGE_VARIANT_SUFFIX distinguishes the ubuntu-24.04-pinned "compat" build
+# (see release.yml) from the regular build in the release artifact filename.
+OUTPUT="${OUTPUT_DIR}/ProtonVPN-Qt-${VERSION}-standalone${APPIMAGE_VARIANT_SUFFIX:+-${APPIMAGE_VARIANT_SUFFIX}}-${APPIMAGE_ARCH}.AppImage"
+
 # -- Sanity checks -------------------------------------------------------------
 command -v cmake   >/dev/null 2>&1 || die "cmake is not installed"
 command -v python3 >/dev/null 2>&1 || die "python3 is not installed"
 command -v wget    >/dev/null 2>&1 || die "wget is not installed"
-command -v ar      >/dev/null 2>&1 || die "ar not found — install binutils"
+command -v ar      >/dev/null 2>&1 || die "ar not found; install binutils"
 command -v gcc     >/dev/null 2>&1 || die "gcc is not installed (needed for stub library)"
 [[ -f "${SCRIPT_DIR}/src/CMakeLists.txt" ]] || die "Run this script from the repository root."
 
@@ -73,25 +110,25 @@ python3 -m venv "${AQT_VENV}"
 "${AQT_VENV}/bin/pip" install --quiet aqtinstall
 
 info "Resolving latest Qt ${QT_SPEC}.x release via aqt..."
-QT_VERSION=$("${AQT_VENV}/bin/aqt" list-qt linux desktop --spec "${QT_SPEC}" --latest-version)
+QT_VERSION=$("${AQT_VENV}/bin/aqt" list-qt "${QT_HOST}" desktop --spec "${QT_SPEC}" --latest-version)
 [[ -n "${QT_VERSION}" ]] || die "Could not resolve latest Qt ${QT_SPEC}.x version via aqt"
 info "Latest available: Qt ${QT_VERSION}"
 
-# The arch identifier used to query/install changed from "gcc_64" (Qt <=6.5)
-# to "linux_gcc_64" (Qt >=6.8); resolve it instead of hardcoding either. The
-# on-disk install directory is always named "gcc_64" regardless of which arch
-# identifier was used to install it.
-QT_ARCH=$("${AQT_VENV}/bin/aqt" list-qt linux desktop --arch "${QT_VERSION}" | tr ' ' '\n' | grep -m1 'gcc_64$')
-[[ -n "${QT_ARCH}" ]] || die "Could not resolve Qt linux desktop arch for ${QT_VERSION}"
+# The x86_64 arch identifier used to query/install changed from "gcc_64"
+# (Qt <=6.5) to "linux_gcc_64" (Qt >=6.8); resolve it instead of hardcoding
+# either. The on-disk install directory keeps the short name (gcc_64 or
+# gcc_arm64) regardless of which identifier was used to install it.
+QT_ARCH=$("${AQT_VENV}/bin/aqt" list-qt "${QT_HOST}" desktop --arch "${QT_VERSION}" | tr ' ' '\n' | grep -m1 "${QT_ARCH_PATTERN}")
+[[ -n "${QT_ARCH}" ]] || die "Could not resolve Qt ${QT_HOST} desktop arch for ${QT_VERSION}"
 
 QT_CACHE="${BUILD_ROOT}/qt"
-QT_DIR="${QT_CACHE}/${QT_VERSION}/gcc_64"
+QT_DIR="${QT_CACHE}/${QT_VERSION}/${QT_DIR_NAME}"
 
 # qtsvg and qtwayland (the platform plugin) ship in the base install as of at
-# least Qt 6.10+ — no -m addon modules needed; requesting them by name errors.
+# least Qt 6.10+, so no -m addon modules are needed; requesting them by name errors.
 if [[ ! -x "${QT_DIR}/bin/qmake6" ]]; then
     info "Installing Qt ${QT_VERSION} (${QT_ARCH}) via aqt..."
-    "${AQT_VENV}/bin/aqt" install-qt linux desktop "${QT_VERSION}" "${QT_ARCH}" \
+    "${AQT_VENV}/bin/aqt" install-qt "${QT_HOST}" desktop "${QT_VERSION}" "${QT_ARCH}" \
         -O "${QT_CACHE}"
 fi
 
@@ -101,13 +138,13 @@ export QMAKE
 export PATH="${QT_DIR}/bin:${PATH}"
 
 # -- Build the Qt app ----------------------------------------------------------
-# -march=x86-64 pins our binary to the generic baseline, regardless of the CI runner's compiler default.
+# -march pins our binary to the generic baseline for the target CPU, regardless of the CI runner's compiler default.
 info "Building ProtonVPN Qt App (Release)..."
 cmake -S "${SCRIPT_DIR}/src" -B "${BUILD_ROOT}/native" \
       -DCMAKE_BUILD_TYPE=Release -G Ninja \
       -DCMAKE_PREFIX_PATH="${QT_DIR}" \
-      -DCMAKE_C_FLAGS="-march=x86-64" \
-      -DCMAKE_CXX_FLAGS="-march=x86-64"
+      -DCMAKE_C_FLAGS="-march=${MARCH}" \
+      -DCMAKE_CXX_FLAGS="-march=${MARCH}"
 cmake --build "${BUILD_ROOT}/native" --parallel
 
 info "Installing into AppDir..."
@@ -131,7 +168,7 @@ mkdir -p "${CLI_DIR}" "${DEB_CACHE}" "${DEB_EXTRACT}"
 
 DEB_URLS="${BUILD_ROOT}/protonvpn-deb-urls.txt"
 info "Resolving package URLs from ProtonVPN apt repo..."
-python3 "${SCRIPT_DIR}/appimage/fetch-cli-debs.py" "${CLI_VERSION}" > "${DEB_URLS}"
+python3 "${SCRIPT_DIR}/appimage/fetch-cli-debs.py" "${CLI_VERSION}" "${DEB_ARCH}" > "${DEB_URLS}"
 
 while IFS= read -r url; do
     dest="${DEB_CACHE}/$(basename "${url}")"
@@ -176,15 +213,26 @@ fi
 # -- Bundle PyGObject (gi) from system Python ----------------------------------
 # The ProtonVPN CLI imports 'gi' at startup for its NetworkManager backend.
 # gi cannot be pip-installed portably; we copy it from the system's Python 3
-# package (python3-gi).  It must be in AppDir NOW so that linuxdeploy picks up
-# its native dependency: libgirepository-1.0.so.0.
+# package.  It must be in AppDir NOW so that linuxdeploy picks up its native
+# dependency: libgirepository.
+# The system Python is asked where each package lives because distros install
+# them in different places: /usr/lib/python3/dist-packages on Debian/Ubuntu,
+# /usr/lib/python3.X/site-packages on Arch and Fedora.
+# gi is required: without it every CLI command fails with "No module named
+# 'gi'", so a build that cannot find it must stop here.  cairo is optional;
+# nothing in the ProtonVPN packages imports it.
+system_py_package_dir() {
+    python3 -c "import importlib.util, os; s = importlib.util.find_spec('$1'); print(os.path.dirname(s.origin) if s and s.origin else '')"
+}
 for gi_pkg in gi cairo; do
-    src="/usr/lib/python3/dist-packages/${gi_pkg}"
-    if [[ -d "${src}" ]]; then
-        info "Copying system Python package: ${gi_pkg}"
+    src=$(system_py_package_dir "${gi_pkg}")
+    if [[ -n "${src}" && -d "${src}" ]]; then
+        info "Copying system Python package: ${gi_pkg} (${src})"
         cp -r "${src}" "${CLI_DIR}/dist-packages/"
+    elif [[ "${gi_pkg}" == "gi" ]]; then
+        die "System Python package not found: gi (install python3-gi on Debian/Ubuntu, python-gobject on Arch)"
     else
-        warn "System Python package not found: ${src} (install python3-gi / python3-gi-cairo)"
+        warn "System Python package not found: ${gi_pkg} (install python3-gi-cairo on Debian/Ubuntu, python-cairo on Arch)"
     fi
 done
 
@@ -208,16 +256,16 @@ cp "${SCRIPT_DIR}/appimage/AppRun" "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 
 # -- Download linuxdeploy tools (cached after first run) -----------------------
-LINUXDEPLOY="${TOOLS_DIR}/linuxdeploy-x86_64.AppImage"
-LINUXDEPLOY_QT="${TOOLS_DIR}/linuxdeploy-plugin-qt-x86_64.AppImage"
-APPIMAGETOOL="${TOOLS_DIR}/appimagetool-x86_64.AppImage"
+LINUXDEPLOY="${TOOLS_DIR}/linuxdeploy-${APPIMAGE_ARCH}.AppImage"
+LINUXDEPLOY_QT="${TOOLS_DIR}/linuxdeploy-plugin-qt-${APPIMAGE_ARCH}.AppImage"
+APPIMAGETOOL="${TOOLS_DIR}/appimagetool-${APPIMAGE_ARCH}.AppImage"
 
 mkdir -p "${TOOLS_DIR}"
 
 declare -A TOOL_URLS=(
-    ["${LINUXDEPLOY}"]="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage"
-    ["${LINUXDEPLOY_QT}"]="https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage"
-    ["${APPIMAGETOOL}"]="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+    ["${LINUXDEPLOY}"]="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${APPIMAGE_ARCH}.AppImage"
+    ["${LINUXDEPLOY_QT}"]="https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-${APPIMAGE_ARCH}.AppImage"
+    ["${APPIMAGETOOL}"]="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${APPIMAGE_ARCH}.AppImage"
 )
 
 for dest in "${!TOOL_URLS[@]}"; do
@@ -280,7 +328,7 @@ rm -f "${APPDIR}/usr/lib/libjxrglue.so.0"
 # remain as a fallback for local builds against a system-installed Qt.
 for _wayland_dir in \
     "${QT_DIR}/plugins/platforms" \
-    "/usr/lib/x86_64-linux-gnu/qt6/plugins/platforms" \
+    "/usr/lib/${MULTIARCH}/qt6/plugins/platforms" \
     "/usr/lib/qt6/plugins/platforms" \
     "/usr/lib64/qt6/plugins/platforms"; do
     if [[ -f "${_wayland_dir}/libqwayland.so" ]]; then
@@ -288,15 +336,33 @@ for _wayland_dir in \
         info "Bundled Wayland platform plugin (${_wayland_dir})"
 
         # Copy shared library dependencies of libqwayland.so not already bundled.
-        # Core glibc libraries (libc, ld-linux, libpthread, etc.) are excluded:
-        # these must come from the host system at runtime, never from the
-        # AppImage, matching linuxdeploy's own excludelist. Bundling libc.so.6
-        # ties the AppImage to the CI runner's glibc build (e.g. its compiled
-        # CPU baseline), breaking it on hosts with an older/different CPU.
-        _glibc_excludelist='^(ld-linux(-x86-64)?\.so\.2|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*)$'
+        # Libraries that must come from the host system at runtime are skipped,
+        # matching linuxdeploy's own excludelist (AppImage's excludelist).
+        _host_libs=(
+            # Core glibc: bundling libc.so.6 ties the AppImage to the CI
+            # runner's glibc build (e.g. its compiled CPU baseline), breaking
+            # it on hosts with an older/different CPU.
+            'ld-linux(-x86-64)?\.so\.2' 'ld-linux-aarch64\.so\.1' 'libc\.so\.6'
+            'libm\.so\.6' 'libpthread\.so\.0' 'libdl\.so\.2' 'librt\.so\.1'
+            'libresolv\.so\.2' 'libnsl\.so\.1' 'libutil\.so\.1' 'libcrypt\.so\.1'
+            'libnss_.*\.so.*'
+            # Graphics and display: these have to match the host's GPU driver
+            # and display server. Bundled copies are known to break Mesa and
+            # proprietary drivers with "undefined symbol" errors.
+            'libGL\.so\.1' 'libEGL\.so\.1' 'libGLX\.so\.0' 'libGLdispatch\.so\.0'
+            'libX11\.so\.6' 'libxcb\.so\.1' 'libwayland-client\.so\.0'
+            # Fonts: a bundled fontconfig older than the host cannot parse the
+            # host's /etc/fonts config, so it prints a wall of warnings and
+            # drops the generic families (sans-serif, monospace, emoji), which
+            # changes font fallback. expat and zlib are their dependencies and
+            # come from the host too, so the host's fontconfig and freetype
+            # never run against older bundled copies.
+            'libfontconfig\.so\.1' 'libfreetype\.so\.6' 'libexpat\.so\.1' 'libz\.so\.1'
+        )
+        _host_excludelist="^($(IFS='|'; echo "${_host_libs[*]}"))$"
         while IFS= read -r _dep; do
             _dep_name=$(basename "${_dep}")
-            if [[ "${_dep_name}" =~ ${_glibc_excludelist} ]]; then
+            if [[ "${_dep_name}" =~ ${_host_excludelist} ]]; then
                 continue
             fi
             if [[ -f "${_dep}" && ! -f "${APPDIR}/usr/lib/${_dep_name}" ]]; then
@@ -338,7 +404,7 @@ for lib in libssl.so.3 libcrypto.so.3; do
         cp -n "${src}" "${APPDIR}/usr/lib/"
         info "  Bundled: ${lib} (${src})"
     else
-        warn "  ${lib} not found via ldconfig — Qt TLS will not work"
+        warn "  ${lib} not found via ldconfig; Qt TLS will not work"
     fi
 done
 
@@ -353,7 +419,7 @@ PYTHON_CACHE="${BUILD_ROOT}/python-standalone"
 # python3-gi (and other native extensions) are compiled for the system Python;
 # the bundled interpreter must be the same major.minor so extensions load correctly.
 SYSTEM_PY_VER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-info "System Python: ${SYSTEM_PY_VER} — fetching matching python-build-standalone"
+info "System Python: ${SYSTEM_PY_VER}, fetching matching python-build-standalone"
 
 if [[ ! -d "${PYTHON_CACHE}/python" ]]; then
     info "Resolving latest python-build-standalone release..."
@@ -368,7 +434,7 @@ with urllib.request.urlopen(req, timeout=30) as r:
 for asset in data['assets']:
     n = asset['name']
     if (f'cpython-{py_ver}' in n and 'linux-gnu-install_only' in n and
-            ('x86_64-unknown' in n or 'x86_64_v1-unknown' in n) and
+            any(p in n for p in (${PBS_ARCH_PREFIXES})) and
             n.endswith('.tar.gz')):
         print(asset['browser_download_url'])
         break
@@ -410,6 +476,9 @@ fi
 #             Python dist-packages (for gi, which was bundled from the system).
 # The bundled Python uses its own RPATH-resolved OpenSSL; no LD_LIBRARY_PATH
 # manipulation is needed.
+# sys.argv[0] is set because the CLI names itself after it: under "python -c"
+# it would otherwise be "-c", which then appears in the CLI's own messages
+# ("Please sign in with '-c signin'").
 cat > "${CLI_DIR}/protonvpn" << EOF
 #!/bin/bash
 PROTON_DIR="\${APPDIR}/usr/share/protonvpn"
@@ -417,13 +486,13 @@ export PYTHONHOME="\${PROTON_DIR}/python"
 VENV_SITE="\${PROTON_DIR}/venv/lib/${PY_VER}/site-packages"
 PROTON_PKG="\${PROTON_DIR}/dist-packages"
 export PYTHONPATH="\${PROTON_PKG}:\${VENV_SITE}"
-exec "\${PROTON_DIR}/python/bin/python${SYSTEM_PY_VER}" -c "from proton.vpn.cli import main; main()" "\$@"
+exec "\${PROTON_DIR}/python/bin/python${SYSTEM_PY_VER}" -c "import sys; sys.argv[0] = 'protonvpn'; from proton.vpn.cli import main; main()" "\$@"
 EOF
 chmod +x "${CLI_DIR}/protonvpn"
 
 info "ProtonVPN CLI v${CLI_VERSION} bundled (${CLI_DIR})"
 
-# linuxdeploy may have overwritten AppRun — restore ours.
+# linuxdeploy may have overwritten AppRun, so restore ours.
 cp "${SCRIPT_DIR}/appimage/AppRun" "${APPDIR}/AppRun"
 chmod +x "${APPDIR}/AppRun"
 

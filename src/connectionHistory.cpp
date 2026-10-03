@@ -1,4 +1,3 @@
-#include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -8,6 +7,7 @@
 #include <ranges>
 #include "appConfig.h"
 #include "connectionHistory.h"
+#include "jsonFile.h"
 
 namespace
 {
@@ -147,10 +147,6 @@ void ConnectionHistory::load()
 
 void ConnectionHistory::save() const
 {
-    const QString path = historyFilePath();
-    // ReSharper disable once CppExpressionWithoutSideEffects
-    QDir().mkpath(QFileInfo(path).absolutePath());
-
     QJsonArray arr;
     for (const auto& e : m_entries)
     {
@@ -162,10 +158,6 @@ void ConnectionHistory::save() const
         arr.append(obj);
     }
 
-    QFile f(path);
-    if (f.open(QIODevice::WriteOnly | QIODevice::Text))
-    {
-        f.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
-    }
+    (void)JsonFile::write(historyFilePath(), QJsonDocument(arr));
 }
 

@@ -149,6 +149,18 @@ QListWidget#locationPickerList::item:selected:!active {
 QListWidget#locationPickerList::item:hover {
     background-color: #ececf8;
 }
+/*  Picker dropdown row under the mouse (PickerBase::setHoveredRow). Matches the
+    row only, never the labels and buttons inside it, so the translucent color
+    is painted once.  */
+QListWidget#locationPickerList QWidget[hovered="true"] {
+    background-color: rgba(109, 74, 255, 60);
+}
+
+/*  Countries page: the "Fastest server" row at the top of a city list  */
+QWidget#cityRow[fastest="true"] {
+    background-color: rgba(109, 74, 255, 40);
+}
+
 QLabel#locationPickerItemLabel {
     color: #1a1a2e;
     font-size: 13px;
@@ -172,16 +184,53 @@ QPushButton#primaryButton:disabled {
     color: #9090a8;
 }
 
-QPushButton#secondaryButton {
+/*  Also applied to the buttons Qt creates inside standard dialogs
+    (QMessageBox, QDialogButtonBox), which the app cannot give an object
+    name; without a rule they would be drawn by the native style.  */
+QPushButton#secondaryButton,
+QDialogButtonBox QPushButton {
     background-color: transparent;
     color: #5a5a7a;
     border: 1px solid #c8c8d8;
     border-radius: 6px;
     padding: 4px 12px;
 }
-QPushButton#secondaryButton:hover {
+QPushButton#secondaryButton:hover,
+QDialogButtonBox QPushButton:hover {
     background-color: #e0e0ec;
     color: #1a1a2e;
+}
+
+/*  Main button of a dialog (Close, Got It!, Download). Mirrors how Breeze
+    draws a dialog's default button, so builds running under Fusion (the
+    AppImage) look the same. A standard dialog's default button gets it too.  */
+QPushButton#dialogButton,
+QDialogButtonBox QPushButton:default {
+    background-color: rgba(109, 74, 255, 0.15);
+    color: palette(button-text);
+    border: 1px solid #9a84fd;
+    border-radius: 4px;
+    padding: 4px 12px;
+}
+QPushButton#dialogButton:hover,
+QDialogButtonBox QPushButton:default:hover {
+    background-color: rgba(109, 74, 255, 0.25);
+    border-color: #6d4aff;
+}
+QPushButton#dialogButton:pressed,
+QDialogButtonBox QPushButton:default:pressed {
+    background-color: rgba(109, 74, 255, 0.35);
+}
+
+QDialogButtonBox QPushButton {
+    min-width: 64px;
+}
+
+/*  No stock icons (Fusion's check mark on OK, for one) on the buttons of
+    standard dialogs: Breeze draws none, and the AppImage, which runs under
+    Fusion, should look the same.  */
+QDialogButtonBox {
+    dialogbuttonbox-buttons-have-icons: 0;
 }
 
 /* Floating overlay variant – same look as secondaryButton but with a solid
@@ -496,7 +545,7 @@ QFrame#drawerNotch:hover {
     background-color: #d0d0e8;
 }
 
-/*  Tabs (Settings page) — Fusion has no built-in Breeze-like tab rendering,
+/*  Tabs (Settings page): Fusion has no built-in Breeze-like tab rendering,
     so this is defined explicitly rather than left to the active QStyle. */
 QTabWidget::pane {
     background-color: #f0f0f5;
@@ -583,3 +632,60 @@ QComboBox::down-arrow:disabled {
     opacity: 0.3;
 }
 
+/*  ==========================================================================
+    Colors that used to live in inline setStyleSheet() calls in C++.
+    Same rules as style.qss, retuned for contrast against a light background.
+    ========================================================================== */
+
+/*  VPN status label - color follows the "vpnState" dynamic property  */
+QLabel#vpnStatusLabel {
+    font-size: 16pt;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #5a5a7a;
+}
+QLabel#vpnStatusLabel[vpnState="connected"]     { color: #14794a; }
+QLabel#vpnStatusLabel[vpnState="disconnected"]  { color: #6b6b7b; }
+QLabel#vpnStatusLabel[vpnState="transitioning"] { color: #a8690a; }
+QLabel#vpnStatusLabel[vpnState="error"]         { color: #b3302f; }
+
+/*  Secondary description text under a setting name  */
+QLabel#settingsDesc                  { color: #6a6a78; }
+QLabel#settingsDesc[disabled="true"] { color: #a8a8b4; }
+QLabel#infoKey[disabled="true"]      { color: #9a9aa6; }
+
+/*  Accent rows: "Fastest server" entries and picker actions  */
+QLabel#locationPickerItemLabel[fastest="true"] { color: #6d4aff; }
+QLabel#cityLabel[fastest="true"] { color: #6d4aff; background-color: transparent; }
+QLabel#locationPickerItemLabel[action="true"] { color: #6a6a78; }
+
+/*  Location picker dimmed for free accounts (no location choice)  */
+QLabel#locationPickerTop[dimmed="true"],
+QLabel#locationPickerBottom[dimmed="true"] { color: #a0a0b0; }
+
+/*  Account plan value  */
+QLabel#infoValue[plan="free"] { color: #6a6a78; font-weight: normal; }
+QLabel#infoValue[plan="plus"] { color: #6d4aff; font-weight: bold; }
+
+/*  ==========================================================================
+    VPN page background globe
+    ========================================================================== */
+
+/*  Every plain container on the VPN page lets the globe show through. Widgets
+    with background rules of their own (pickers, drawer, banners, buttons) keep
+    them: those rules are more specific than this one.  */
+VpnPage QWidget {
+    background-color: transparent;
+}
+
+/*  Text over the globe sits on a partly transparent backdrop to stay legible.  */
+QLabel#vpnStatusLabel,
+QLabel#timerLabel,
+QLabel#infoLabel {
+    background-color: rgba(240, 240, 245, 0.72);
+    border-radius: 8px;
+    padding: 2px 12px;
+}
+QLabel#infoLabel[empty="true"] {
+    background-color: transparent;
+}

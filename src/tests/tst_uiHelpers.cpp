@@ -10,6 +10,16 @@ class TstUiHelpers : public QObject
 
 private slots:
 
+    //  onOffString
+
+    void onOffString_roundTripsThroughIsOnString()
+    {
+        QCOMPARE(onOffString(true), QStringLiteral("on"));
+        QCOMPARE(onOffString(false), QStringLiteral("off"));
+        QVERIFY(isOnString(onOffString(true)));
+        QVERIFY(isOnString(onOffString(false)) == false);
+    }
+
     //  isOnString
 
     void isOnString_on_returnsTrue()

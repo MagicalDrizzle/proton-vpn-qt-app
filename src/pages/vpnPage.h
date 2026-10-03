@@ -1,6 +1,8 @@
 #pragma once
 
 #include <optional>
+#include <tuple>
+#include <QElapsedTimer>
 #include <QPushButton>
 #include <QTimer>
 #include <QPropertyAnimation>
@@ -12,8 +14,10 @@
 #include "../widgets/pickerBase.h"
 #include "../widgets/pickerDrawer.h"
 #include "../widgets/infoBanner.h"
-#include "../widgets/appImageBetaBanner.h"
-#include "../widgets/flatpakBetaBanner.h"
+#include "../widgets/pixmapCache.h"
+#include "../widgets/svgBanner.h"
+#include "../widgets/globeWidget.h"
+#include <QGridLayout>
 #include "../dialogs/errorDetailsDialog.h"
 
 // ---------------------------------------------------------------------------
@@ -28,6 +32,9 @@ public:
     explicit PowerButton(QWidget* parent = nullptr);
     enum class RingState { Unknown, Connected, Disconnected, Spinning };
     void setState(RingState s);
+    // Resizes the button to `scale` times its design size; the ring, glow and
+    // icon all scale with it.
+    void setScale(qreal scale);
     [[nodiscard]] qreal spinAngle() const { return m_spinAngle; }
     void setSpinAngle(qreal a) { m_spinAngle = a; update(); }
 
@@ -37,13 +44,22 @@ signals:
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+    void keyPressEvent(QKeyEvent*) override;
     void enterEvent(QEnterEvent*) override;
     void leaveEvent(QEvent*) override;
+    void focusInEvent(QFocusEvent*) override;
+    void focusOutEvent(QFocusEvent*) override;
 
 private:
     RingState m_state = RingState::Unknown;
+    qreal m_scale = 1.0;
+    // The power icon by size, screen ratio and theme: the background globe
+    // repaints the button on every frame.
+    PixmapCache<std::tuple<int, qreal, bool>> m_iconCache;
     qreal m_spinAngle = 0.0;
     bool m_hovered = false;
+    bool m_pressed = false;
     QPropertyAnimation* m_anim = nullptr;
     void startSpin() const;
     void stopSpin();
@@ -61,6 +77,9 @@ public:
     void populate(const QList<QPair<QString, QString>>& cities);
     void setLoading(bool loading);
     void setSelectedCity(const QString& city);
+    // setSelectedCity() plus the selectionChanged() notification. Use this
+    // instead of emitting the signal from outside the class.
+    void selectCity(const QString& city);
     // Tries to select city in the populated list.
     // Returns true if found; false if not found (falls back to "Active connection").
     bool trySelectCity(const QString& city);
@@ -144,6 +163,9 @@ public:
     explicit VpnPage(VpnManager* manager, QWidget* parent = nullptr);
 
     void onStateChanged(VpnState state, const QString& info);
+    // Applies the globe settings: shows or removes it per Globe Animation and
+    // the desktop's reduce-motion preference, and sets Pause When Unfocused.
+    void applyGlobeSettings();
     void notifyExternalConnect(const QString& city);
     void refreshRecentPicker() const;
     void refreshFavoritesPicker() const;
@@ -168,6 +190,7 @@ signals:
 protected:
     void changeEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private slots:
     void onCitiesReady(const QString& countryCode, const QList<QPair<QString, QString>>& cities);
@@ -194,10 +217,13 @@ private:
 
     // Wide-mode layout widgets
     QWidget*          m_logoRow              = nullptr;
+    QHBoxLayout*      m_logoRowLayout        = nullptr;
+    SvgBanner*        m_logo                 = nullptr;
+    QVBoxLayout*      m_topLayout            = nullptr;
     QWidget*          m_topContentWidget     = nullptr;
     QScrollArea*      m_scrollArea           = nullptr;
     // Narrow-mode scroll offset wrapper - carries the kCollapsedW left margin so
-    // only the scroll area is pushed right (logo/power remain full-width centred).
+    // only the scroll area is pushed right (logo/power remain full-width centered).
     QWidget*          m_scrollOffsetWidget   = nullptr;
     QVBoxLayout*      m_scrollOffsetLayout   = nullptr;
     QWidget*          m_narrowContent        = nullptr;
@@ -207,6 +233,11 @@ private:
     QVBoxLayout*      m_pickerSidebarLayout  = nullptr;
     QWidget*          m_rightContent         = nullptr;
     QVBoxLayout*      m_rightContentLayout   = nullptr;
+    // Wide mode places the sidebar and the content in a grid, in one of two
+    // arrangements (see updateWideArrangement()).
+    QGridLayout*      m_wideGrid             = nullptr;
+    bool              m_wideCentered         = false;
+    bool              m_arrangementPending   = false;
     bool              m_wideMode             = false;
 
     static constexpr int kWideThreshold = 700;
@@ -223,11 +254,11 @@ private:
 
     InfoBanner*     m_versionBanner = nullptr;
     InfoBanner*     m_prereleaseBanner = nullptr;
-    FlatpakBetaBanner*  m_flatpakBetaBanner  = nullptr;
-    AppImageBetaBanner* m_appImageBetaBanner = nullptr;
     QTimer*         m_elapsedTimer;
     QTimer*         m_checkingSpinnerTimer;
-    int   m_elapsedSeconds = 0;
+    // Monotonic reference for the connection duration display; the label is
+    // recomputed from this on every tick rather than incrementing a counter.
+    QElapsedTimer   m_connectedSince;
     int   m_checkingSpinnerFrame = 0;
     QString m_rawError;
 
@@ -236,6 +267,8 @@ private:
     QLabel*         m_portLabel     = nullptr;
     NatPmpManager*  m_natPmpManager = nullptr;
     InfoBanner*     m_natpmpcBanner = nullptr;
+    // The port forwarding setting as last seen, to act only when it changes.
+    bool            m_portForwardingOn = false;
 
     VpnState m_currentState = VpnState::Unknown;
     QString  m_activeCity;
@@ -251,23 +284,47 @@ private:
 
     // kWideThreshold removed; threshold is now computed dynamically in relayoutPickers()
 
+    // Constructor helpers - each builds one self-contained part of the page.
+    void buildPortRow(QWidget* parent, QVBoxLayout* layout);
+    void buildBannerArea(QVBoxLayout* scrollLayout);
+    void buildDrawer();
+
     void updateUi(VpnState state, const QString& info);
     void startElapsedTimer();
     void stopElapsedTimer() const;
-    void showErrorDetails() const;
+    void showErrorDetails();
     void relayoutPickers(int width = 0) const; // delegates to drawer syncVisibility
     void applyWideMode(bool wide);
     void repositionDrawer();
     void repositionDrawerNotch(int drawerW);
     void updateDrawerNotchIcon();
     void checkPrereleaseBanner();
-    void checkFlatpakBetaBanner();
-    void checkAppImageBetaBanner();
     void updateBannerAreaVisibility();
+    // Scales the logo, power button, status text and their spacing with the
+    // page size; 1 at the default window size (see vpnPage.cpp).
+    void updateContentScale();
+    qreal m_contentScale = 1.0;
+
+    // Background globe and the country it should face (see updateGlobeTarget()).
+    GlobeWidget* m_globe = nullptr;
+    // Country of the current connection as reported by `protonvpn status`;
+    // cleared when a new connection starts or the connection ends.
+    QString m_globeStatusCountry;
+    void updateGlobeTarget();
+    void syncInfoBackdrop() const;
+    // Wide mode only: chooses between the content spanning the full width
+    // above the dropdowns and sitting in a column beside them.
+    void updateWideArrangement();
+    // Runs updateWideArrangement() once the pending layout pass is done.
+    void scheduleWideArrangement();
     void applyFreeUserMode() const;
     void startNatPmpLoop();
     void stopNatPmpLoop();
+    // Stops the keep-alive and hides the forwarded port, and nothing more:
+    // stopNatPmpLoop() also forgets the connection, for a disconnect.
+    void stopPortForwarding();
     void showNatpmpcBanner();
+    void dismissNatpmpcBanner();
     void refreshConnectedInfoLabel() const;
     // After populate(), try to select m_pendingStatusCity; falls back to
     void applyPendingStatusCity();

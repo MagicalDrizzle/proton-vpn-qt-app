@@ -120,6 +120,74 @@ private slots:
         // Restore
         AppConfig::instance().setRecentConnectionsCount(5);
     }
+
+    void defaults_globeAnimationIsAuto()
+    {
+        QVERIFY(AppConfig::instance().globeAnimation() == AppConfig::GlobeAnimation::Auto);
+    }
+
+    void setGlobeAnimation_storesValue()
+    {
+        AppConfig::instance().setGlobeAnimation(AppConfig::GlobeAnimation::Off);
+        QVERIFY(AppConfig::instance().globeAnimation() == AppConfig::GlobeAnimation::Off);
+        // Restore
+        AppConfig::instance().setGlobeAnimation(AppConfig::GlobeAnimation::Auto);
+    }
+
+    void defaults_globePauseWhenUnfocusedIsFalse()
+    {
+        QCOMPARE(AppConfig::instance().globePauseWhenUnfocused(), false);
+    }
+
+    void setGlobePauseWhenUnfocused_storesValue()
+    {
+        AppConfig::instance().setGlobePauseWhenUnfocused(true);
+        QCOMPARE(AppConfig::instance().globePauseWhenUnfocused(), true);
+        // Restore
+        AppConfig::instance().setGlobePauseWhenUnfocused(false);
+    }
+
+    void globeAnimationName_eachValue_isDistinct()
+    {
+        QCOMPARE(AppConfig::globeAnimationName(AppConfig::GlobeAnimation::Auto), QStringLiteral("auto"));
+        QCOMPARE(AppConfig::globeAnimationName(AppConfig::GlobeAnimation::On),   QStringLiteral("on"));
+        QCOMPARE(AppConfig::globeAnimationName(AppConfig::GlobeAnimation::Off),  QStringLiteral("off"));
+    }
+
+    void globeAnimationFromName_roundTripsAndDefaultsToAuto()
+    {
+        for (const AppConfig::GlobeAnimation value : {AppConfig::GlobeAnimation::Auto,
+                                                      AppConfig::GlobeAnimation::On,
+                                                      AppConfig::GlobeAnimation::Off})
+        {
+            QCOMPARE(AppConfig::globeAnimationFromName(AppConfig::globeAnimationName(value)), value);
+        }
+        QCOMPARE(AppConfig::globeAnimationFromName(QStringLiteral("sometimes")), AppConfig::GlobeAnimation::Auto);
+        QCOMPARE(AppConfig::globeAnimationFromName(QString()), AppConfig::GlobeAnimation::Auto);
+    }
+
+    void defaults_splitViewCountriesRatioIsDefault()
+    {
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), AppConfig::SPLIT_RATIO_DEFAULT);
+    }
+
+    void setSplitViewCountriesRatio_inRange_storesValue()
+    {
+        AppConfig::instance().setSplitViewCountriesRatio(0.5);
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), 0.5);
+        // Restore
+        AppConfig::instance().setSplitViewCountriesRatio(AppConfig::SPLIT_RATIO_DEFAULT);
+    }
+
+    void setSplitViewCountriesRatio_outOfRange_clamps()
+    {
+        AppConfig::instance().setSplitViewCountriesRatio(0.0);
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), AppConfig::SPLIT_RATIO_MIN);
+        AppConfig::instance().setSplitViewCountriesRatio(1.0);
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), AppConfig::SPLIT_RATIO_MAX);
+        // Restore
+        AppConfig::instance().setSplitViewCountriesRatio(AppConfig::SPLIT_RATIO_DEFAULT);
+    }
 };
 
 QTEST_MAIN(TstAppConfig)

@@ -3,7 +3,8 @@
 #include <QHBoxLayout>
 #include <QSvgWidget>
 
-#include <array>
+#include "../uiHelpers.h"
+#include "../widgets/styleUtils.h"
 
 namespace
 {
@@ -13,11 +14,6 @@ constexpr int INFO_ROW_H_MARGIN    = 16;
 constexpr int INFO_ROW_V_MARGIN    = 10;
 constexpr int REFRESH_BTN_HEIGHT   = 30;
 constexpr int SPINNER_INTERVAL_MS  = 200;
-constexpr int SPINNER_FRAME_COUNT  = 10;
-
-constexpr std::array<const char*, SPINNER_FRAME_COUNT> SPINNER_FRAMES = {
-    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
-};
 
 QWidget* makeInfoRow(const QString& labelText, QLabel*& valueLabel, QWidget* parent)
 {
@@ -103,9 +99,9 @@ AccountPage::AccountPage(VpnManager* manager, QWidget* parent)
     m_spinnerTimer->setInterval(SPINNER_INTERVAL_MS);
     connect(m_spinnerTimer, &QTimer::timeout, this, [this]()
     {
-        m_spinnerFrame = (m_spinnerFrame + 1) % SPINNER_FRAME_COUNT;
+        m_spinnerFrame = (m_spinnerFrame + 1) % kSpinnerFrameCount;
         m_nameLabel->setText(
-            tr("%1 Loading\u2026").arg(QString::fromUtf8(SPINNER_FRAMES[m_spinnerFrame])));
+            tr("%1 Loading\u2026").arg(QString::fromUtf8(kSpinnerFrames[m_spinnerFrame])));
     });
 }
 
@@ -141,17 +137,19 @@ void AccountPage::onAccountTypeReady(AccountType type) const
     {
         case AccountType::Free:
             m_planLabel->setText(tr("Free"));
-            m_planLabel->setStyleSheet(QStringLiteral("color: #aaaaaa;"));
+            setStyleProperty(m_planLabel, "plan", QStringLiteral("free"));
             m_upgradeLabel->show();
             break;
+
         case AccountType::Plus:
             m_planLabel->setText(tr("VPN Plus"));
-            m_planLabel->setStyleSheet(QStringLiteral("color: #7B61FF; font-weight: bold;"));
+            setStyleProperty(m_planLabel, "plan", QStringLiteral("plus"));
             m_upgradeLabel->hide();
             break;
+
         default:
             m_planLabel->setText(QStringLiteral("\u2014"));
-            m_planLabel->setStyleSheet(QString());
+            setStyleProperty(m_planLabel, "plan", QString());
             m_upgradeLabel->hide();
             break;
     }

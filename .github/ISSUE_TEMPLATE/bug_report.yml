@@ -14,11 +14,11 @@ body:
       description: Please confirm all of the following before submitting. **All boxes must be checked.**
       options:
         - label: >
-            The official **Proton VPN GTK app is NOT installed**. It conflicts with this app — both will fight
+            The official **Proton VPN GTK app is NOT installed**. It conflicts with this app; both will fight
             over connection state and session management. Uninstall it before using this app.
           required: true
         - label: >
-            **This app is up to date** — I am running the latest [GitHub Release](../../releases) or have
+            **This app is up to date**: I am running the latest [GitHub Release](../../releases) or have
             built from the latest `main` branch commit.
           required: true
         - label: >
@@ -31,7 +31,7 @@ body:
         - label: >
             **If I installed this app via the AUR**, I am on vanilla Arch Linux or an Arch-based distro
             whose repositories do not override or supersede the vanilla Arch packages
-            (e.g. EndeavourOS ✔ — **Manjaro** and **CachyOS** ✖). Differing package versions from
+            (e.g. EndeavourOS ✔; **Manjaro** and **CachyOS** ✖). Differing package versions from
             overriding repos can cause unpredictable behavior.
           required: true
         - label: >
@@ -92,6 +92,6 @@ body:
     id: additional-context
     attributes:
       label: Additional Context
-      description: Any other context that might be relevant — recent system updates, VPN plan type, affected feature, etc.
+      description: Any other context that might be relevant: recent system updates, VPN plan type, affected feature, etc.
     validations:
       required: false

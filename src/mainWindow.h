@@ -5,11 +5,13 @@
 #include <QFrame>
 #include <QKeyEvent>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include "vpnManager.h"
+#include "widgets/gripSplitter.h"
 
 class QNetworkAccessManager;
 
@@ -19,6 +21,7 @@ class CountriesPage;
 class AccountPage;
 class NotInstalledPage;
 class SettingsPage;
+class CliNotRespondingPage;
 #ifdef QT_DEBUG
 class DebugPage;
 #endif
@@ -42,6 +45,7 @@ private:
         Countries,
         Account,
         Settings,
+        CliNotResponding,
 #ifdef QT_DEBUG
         Debug,
 #endif
@@ -68,11 +72,26 @@ private:
     CountriesPage* m_countriesPage;
     AccountPage* m_accountPage;
     SettingsPage* m_settingsPage;
+    CliNotRespondingPage* m_cliNotRespondingPage;
 #ifdef QT_DEBUG
     DebugPage* m_debugPage;
 #endif
 
+    // Split view: in a wide enough window the Countries page is shown beside
+    // the VPN page instead of on its own page (see applySplitView()). Each
+    // lives in a host widget so the stack indices never shift when it moves.
+    GripSplitter* m_homeSplitter = nullptr; // stack slot for Page::Vpn
+    QWidget*   m_countriesHost  = nullptr; // stack slot for Page::Countries
+    QTimer*    m_splitSaveTimer = nullptr; // saves the divider position after a drag
+    bool       m_splitView      = false;
+    void applySplitView(bool split);
+    // Places the split view divider at the saved Countries share of the width.
+    void applySplitRatio();
+
     void showPage(Page page);
+    // Startup failure pages, also reachable from the Debug page for testing.
+    void showNotInstalled();     // the protonvpn CLI could not be found
+    void showCliNotResponding(); // the startup login check timed out
     void repositionLoginDebugBtn();
     void setupSidebar();
     void refreshIcons();
@@ -80,6 +99,11 @@ private:
     void startupCheck() const;
     void checkForUpdates();
     void updateTrayIcon(VpnState state);
+    void updateTrayTooltipAndAction(VpnState state) const;
+    void notifyStateTransition(VpnState state);
+    // Prompts before quitting with an active connection.  Returns true when the
+    // caller should proceed with the quit.
+    bool confirmQuit();
     void sendNotification(const QString& title, const QString& message) const;
     void changeEvent(QEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
@@ -88,9 +112,10 @@ private:
     void maybeShowWhatsNew();
 
     QNetworkAccessManager* m_networkManager = nullptr;
-    QSystemTrayIcon* m_trayIcon;
-    QAction* m_trayConnectAction;
-    bool m_startupAutoConnectPending = false; // fire auto-connect once on first Disconnected state
+    // Null when the desktop provides no system tray; every use must be guarded.
+    QSystemTrayIcon* m_trayIcon = nullptr;
+    QAction* m_trayConnectAction = nullptr;
+    bool m_startupAutoConnectPending = false; // auto-connect if the first known state is Disconnected
     VpnState m_lastNotifiedState = VpnState::Unknown;
     bool m_whatsNewShown = false; // guard so we only show the dialog once per launch
 #ifdef QT_DEBUG

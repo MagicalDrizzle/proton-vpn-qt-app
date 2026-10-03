@@ -44,11 +44,16 @@ public:
     void startupAutoConnect(const QString& country = QString(), const QString& city = QString());
     void disconnectVpn();
     static void disconnectVpnSync(); // blocking disconnect - safe to call just before app exit
-    // Disconnect, change any config key/value, then reconnect to the previous location.
+    // Disconnect, change any config key/value, then reconnect to the previous
+    // location: the country and city the app last connected to, or the same
+    // server when the connection was not one the app made (see the .cpp).
     void applyConfigValueAndReconnect(const QString& key, const QString& value);
     void fetchCountries();
     void fetchCities(const QString& countryCode);
     void fetchInfo();
+    // Asks the CLI for the settings it is using (`protonvpn config list`) and
+    // emits settingsReady(). Also runs on its own at sign-in and after every
+    // applyConfigValue(), so listeners stay in step with the CLI.
     void fetchSettings();
     void applyConfig(const QString& key, bool enabled);
     void applyConfigValue(const QString& key, const QString& value);
@@ -64,11 +69,14 @@ public:
     bool        isLoginInProgress()  const { return m_signinProcess != nullptr && m_signinProcess->state() == QProcess::Running; }
     AccountType accountType()        const { return m_accountType; }
     // Last country / city passed to connectVpn() - empty if connected via CLI.
+    // After a reconnect to a server by name, the country is that server's.
     QString     lastConnectCountry() const { return m_lastConnectCountry; }
     QString     lastConnectCity()    const { return m_lastConnectCity; }
     // Last server string seen while Connected (e.g. "US-NJ#189") - empty otherwise.
     QString     connectedServer()    const { return m_connectedServer; }
-    // Reads the port-forwarding setting directly from the settings JSON file.
+    // The settings from the last fetchSettings() (setting -> value, e.g.
+    // "ipv6" -> "on"), or from the CLI's settings file until the first one.
+    QMap<QString, QString> settings() const { return m_settings; }
     bool        portForwardingEnabled() const;
 
 signals:
@@ -92,18 +100,46 @@ signals:
     void cliVersionReady(const QString& version);
     void accountTypeReady(AccountType type);
     void errorOccurred(const QString& error);
+    // Emitted instead of loginStatusResult when `protonvpn info` does not exit
+    // within the startup time limit - typically because the CLI is waiting on
+    // a keyring/wallet unlock prompt.
+    void loginCheckTimedOut();
+    // Emitted (at most once per signed-in session) when a CLI command fails
+    // because the server no longer accepts the session, e.g. an HTTP 401
+    // "Invalid access token". The user has to sign in again.
+    void sessionExpired();
 
 private:
+    // runCommand() timeout value that waits for the CLI indefinitely.
+    static constexpr int CLI_NO_TIMEOUT = 0;
+
     VpnState    m_state         = VpnState::Unknown;
+    // Whether the last login check or sign-in succeeded and no sign-out has
+    // happened since. Gates sessionExpired(): a command that fails with "please
+    // sign in" while nobody is signed in is expected, not an expired session.
+    bool        m_signedIn      = false;
     AccountType m_accountType   = AccountType::Unknown;
     QString     m_connectedServer;       // last server string seen while Connected
     QString     m_lastConnectCountry;    // country arg last passed to connectVpn()
     QString     m_lastConnectCity;       // city    arg last passed to connectVpn()
+    QString     m_lastConnectServer;     // server name last connected to by name, e.g. "US-NJ#203"
     QProcess*       m_signinProcess  = nullptr;
     StatusMonitor*  m_statusMonitor  = nullptr;
+    QMap<QString, QString> m_settings;   // see settings()
+    int             m_configSetsInFlight = 0; // `config set` commands not yet finished
 
+    // The settings saved in the CLI's settings.json, in fetchSettings() form.
+    // Only what the user has changed is in there, so this is the fallback for
+    // when the CLI cannot answer, and the full custom DNS list.
+    static QMap<QString, QString> readSettingsFile();
+
+    // Runs `protonvpn <args>` and calls back with its exit code and output.
+    // With a timeoutMs, a CLI that has not exited by then is terminated and
+    // reported with exit code CLI_EXIT_TIMED_OUT; one that cannot be started
+    // at all is reported with CLI_EXIT_FAILED_TO_START (see protonvpnCli.cpp).
     void runCommand(const QStringList& args,
-                    const std::function<void(int exitCode, const QString& output, const QString& errOutput)>& callback);
+                    const std::function<void(int exitCode, const QString& output, const QString& errOutput)>& callback,
+                    int timeoutMs = CLI_NO_TIMEOUT);
 
     void checkLoginStatus(int retriesLeft);
 
@@ -113,10 +149,20 @@ private:
     // auto-connect indefinitely.
     void checkNetworkReady(int retriesLeft, const std::function<void()>& onReady);
 
+    // Records where a connection is going and enters Connecting, then issues
+    // it with no retries. A server name, when given, wins over country/city.
+    void beginConnect(const QString& country, const QString& city, const QString& server);
+    // The first half of that, shared with startupAutoConnect(): logs `action`
+    // and the destination, records it, and enters Connecting.
+    void enterConnecting(const QString& action, const QString& country, const QString& city,
+                         const QString& server);
+
     // Runs `protonvpn connect`, retrying with backoff up to retriesLeft times
     // on failure before giving up and emitting VpnState::Error. retriesLeft=0
-    // means no retry (used by the manual connectVpn() path).
-    void issueConnect(const QString& country, const QString& city, int retriesLeft);
+    // means no retry (used by the manual connectVpn() path). A non-empty
+    // server connects to that server by name instead of country/city.
+    void issueConnect(const QString& country, const QString& city, int retriesLeft,
+                      const QString& server = QString());
 
     // Background status monitor (long-lived subprocess, every 15 s while logged in).
     void startStatusMonitor();
@@ -124,6 +170,11 @@ private:
 
     // Apply a parsed `protonvpn status` snapshot to internal state and emit
     // the appropriate signals.  Only emits when state or connected server
-    // actually changed, to avoid unnecessary UI redraws.
+    // actually changed, to avoid unnecessary UI redraws.  Snapshots that could
+    // not be parsed (no "status" field) are ignored rather than read as a
+    // disconnect.
     void applyStatusFields(const QMap<QString, QString>& fields);
+
+    // Human-readable name for a state, used in diagnostics.
+    static QString stateToString(VpnState state);
 };

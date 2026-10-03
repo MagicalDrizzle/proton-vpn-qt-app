@@ -5,16 +5,23 @@ proton-vpn-cli at the requested version and all of its ProtonVPN Python
 dependencies (those not available on PyPI).
 
 Usage:
-    python3 fetch-cli-debs.py <cli_version>
+    python3 fetch-cli-debs.py <cli_version> [deb_arch]
+
+deb_arch is the Debian architecture of the native packages to fetch (amd64 or
+arm64). It defaults to the architecture of the machine running the script.
 
 Output: one HTTPS URL per line, suitable for wget.
 """
 
+import platform
 import re
 import sys
 import urllib.request
 
 REPO_BASE = "https://repo.protonvpn.com/debian"
+
+# Debian architecture names for the CPUs the AppImages are built for.
+DEB_ARCH_FOR_MACHINE = {"x86_64": "amd64", "aarch64": "arm64"}
 
 # ProtonVPN Python packages to pull from the apt repo (not on PyPI).
 # Packages are resolved in this order; each one's .deb is output.
@@ -26,7 +33,9 @@ PROTON_PYTHON_DEPS = [
     "python3-proton-vpn-session",
     "python3-proton-vpn-logger",
     "python3-proton-vpn-connection",
-    "python3-proton-vpn-local-agent",   # native amd64 package
+    # python3-proton-vpn-local-agent is intentionally absent: api-core >= 5.5
+    # ships it built in (proton.vpn.platform.local_agent, inside its own
+    # native platform.abi3.so) and declares Replaces: on the old package.
 ]
 
 
@@ -59,8 +68,8 @@ def version_key(v: str) -> tuple:
     return tuple(int(x) if x.isdigit() else x for x in re.split(r"[.\-~]", v))
 
 
-def latest_satisfying(entries: list[dict], min_ver: str | None,
-                      max_ver: str | None = None) -> dict | None:
+def latest_satisfying(name: str, entries: list[dict], min_ver: str | None,
+                      max_ver: str | None = None) -> dict:
     valid = entries
     if min_ver:
         mv = version_key(min_ver)
@@ -69,7 +78,13 @@ def latest_satisfying(entries: list[dict], min_ver: str | None,
         xv = version_key(max_ver)
         valid = [e for e in valid if version_key(e.get("Version", "0")) <= xv]
     if not valid:
-        valid = entries
+        # Fail the build rather than bundle a version the CLI declares
+        # incompatible: it would build cleanly and then crash at runtime.
+        bounds = " and ".join(b for b in (min_ver and f">= {min_ver}",
+                                          max_ver and f"<= {max_ver}") if b)
+        newest = max(entries, key=lambda e: version_key(e.get("Version", "0")))
+        sys.exit(f"ERROR: no {name} version satisfies {bounds} "
+                 f"(newest in repo: {newest.get('Version', '?')})")
     return max(valid, key=lambda e: version_key(e.get("Version", "0")))
 
 
@@ -78,14 +93,22 @@ def deb_url(entry: dict) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        print(f"Usage: {sys.argv[0]} <cli_version>", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print(f"Usage: {sys.argv[0]} <cli_version> [deb_arch]", file=sys.stderr)
         sys.exit(1)
 
     cli_version = sys.argv[1]
+    if len(sys.argv) == 3:
+        deb_arch = sys.argv[2]
+    else:
+        deb_arch = DEB_ARCH_FOR_MACHINE.get(platform.machine(), "")
+    if deb_arch not in DEB_ARCH_FOR_MACHINE.values():
+        print(f"ERROR: unsupported architecture '{deb_arch or platform.machine()}' "
+              f"(supported: {', '.join(DEB_ARCH_FOR_MACHINE.values())})", file=sys.stderr)
+        sys.exit(1)
 
     all_pkgs  = parse_packages(fetch_text(f"{REPO_BASE}/dists/stable/main/binary-all/Packages"))
-    amd64_pkgs = parse_packages(fetch_text(f"{REPO_BASE}/dists/stable/main/binary-amd64/Packages"))
+    arch_pkgs = parse_packages(fetch_text(f"{REPO_BASE}/dists/stable/main/binary-{deb_arch}/Packages"))
 
     # Find the exact CLI .deb
     cli_entries = [e for e in all_pkgs.get("proton-vpn-cli", [])
@@ -110,13 +133,15 @@ def main() -> None:
 
     # Resolve each ProtonVPN Python dependency
     for dep_name in PROTON_PYTHON_DEPS:
-        entries = all_pkgs.get(dep_name) or amd64_pkgs.get(dep_name)
+        # Search both indexes together: a package can move between them when
+        # it gains native code (api-core went from binary-all to the
+        # architecture-specific index at 5.5), leaving older versions behind
+        # in binary-all.
+        entries = all_pkgs.get(dep_name, []) + arch_pkgs.get(dep_name, [])
         if not entries:
-            print(f"WARNING: {dep_name} not found in repo — skipping", file=sys.stderr)
+            print(f"WARNING: {dep_name} not found in repo, skipping", file=sys.stderr)
             continue
-        entry = latest_satisfying(entries, min_versions.get(dep_name))
-        if entry:
-            print(deb_url(entry))
+        print(deb_url(latest_satisfying(dep_name, entries, min_versions.get(dep_name))))
 
 
 if __name__ == "__main__":
