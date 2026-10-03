@@ -226,6 +226,13 @@ QDialogButtonBox QPushButton {
     min-width: 64px;
 }
 
+/*  No stock icons (Fusion's check mark on OK, for one) on the buttons of
+    standard dialogs: Breeze draws none, and the AppImage, which runs under
+    Fusion, should look the same.  */
+QDialogButtonBox {
+    dialogbuttonbox-buttons-have-icons: 0;
+}
+
 /* Floating overlay variant – same look as secondaryButton but with a solid
    page-color background so content scrolling underneath is hidden. */
 QPushButton#refreshOverlayButton {

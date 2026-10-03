@@ -81,6 +81,22 @@ int main(int argc, char* argv[])
 
     AppConfig::instance().logLoadedConfig();
 
+    // Use Breeze style on KDE Plasma if available, else Fusion
+    const QStringList availableStyles = QStyleFactory::keys();
+    if (availableStyles.contains(QStringLiteral("Breeze"), Qt::CaseInsensitive))
+    {
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Breeze")));
+    }
+    else if (availableStyles.contains(QStringLiteral("Fusion"), Qt::CaseInsensitive))
+    {
+        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    }
+
+    // Apply theme (palette + stylesheet) based on saved preference. Done
+    // before the startup checks below so their message boxes match the app
+    // rather than showing Qt's default look (light, with stock buttons).
+    ThemeManager::apply(AppConfig::instance().theme());
+
     // Single-instance guard - prevent multiple copies running at the same time.
     const QString lockPath = QDir::tempPath() + QStringLiteral("/proton-vpn-qt-app.lock");
     QLockFile lockFile(lockPath);
@@ -119,20 +135,6 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // Use Breeze style on KDE Plasma if available, else Fusion
-    const QStringList availableStyles = QStyleFactory::keys();
-    if (availableStyles.contains(QStringLiteral("Breeze"), Qt::CaseInsensitive))
-    {
-        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Breeze")));
-    }
-    else if (availableStyles.contains(QStringLiteral("Fusion"), Qt::CaseInsensitive))
-    {
-        QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
-    }
-
-    // Apply theme (palette + stylesheet) based on saved preference.
-    // This replaces the former hard-coded dark palette block.
-    ThemeManager::apply(AppConfig::instance().theme());
     // Asks the desktop for its reduce-motion preference now, so the answer is
     // in before the VPN page decides whether to show its globe.
     MotionPreference::instance().start();
