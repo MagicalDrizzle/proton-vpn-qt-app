@@ -96,12 +96,20 @@ signals:
     // within the startup time limit - typically because the CLI is waiting on
     // a keyring/wallet unlock prompt.
     void loginCheckTimedOut();
+    // Emitted (at most once per signed-in session) when a CLI command fails
+    // because the server no longer accepts the session, e.g. an HTTP 401
+    // "Invalid access token". The user has to sign in again.
+    void sessionExpired();
 
 private:
     // runCommand() timeout value that waits for the CLI indefinitely.
     static constexpr int CLI_NO_TIMEOUT = 0;
 
     VpnState    m_state         = VpnState::Unknown;
+    // Whether the last login check or sign-in succeeded and no sign-out has
+    // happened since. Gates sessionExpired(): a command that fails with "please
+    // sign in" while nobody is signed in is expected, not an expired session.
+    bool        m_signedIn      = false;
     AccountType m_accountType   = AccountType::Unknown;
     QString     m_connectedServer;       // last server string seen while Connected
     QString     m_lastConnectCountry;    // country arg last passed to connectVpn()

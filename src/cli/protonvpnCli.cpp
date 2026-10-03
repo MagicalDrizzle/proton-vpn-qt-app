@@ -7,6 +7,7 @@
 
 #include "../debug.h"
 #include "cliNoiseFilter.h"
+#include "cliSession.h"
 #include "logRedaction.h"
 #include "flatpakUtils.h"
 #include "statusMonitor.h"
@@ -14,6 +15,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTimer>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <ranges>
@@ -49,6 +51,22 @@ std::pair<QString, QStringList> buildCliCommand(const QStringList& args)
     return buildHostCommand(QStringLiteral("protonvpn"), args);
 }
 
+// True when the output contains the CLI's own "Disconnected." confirmation.
+//
+// `protonvpn disconnect` prints it only once the tunnel is down, but CLI 1.0.3
+// can still exit non-zero afterwards: it then waits on a background location
+// refresh that api-core starts on disconnect, and that has been seen to end
+// the process with exit code 1 and no output at all. The line is therefore a
+// more reliable answer to "did the disconnect happen?" than the exit code.
+bool reportsDisconnected(const QString& out)
+{
+    const QStringList lines = out.split(QLatin1Char('\n'));
+    return std::ranges::any_of(lines, [](const QString& line)
+    {
+        return line.trimmed() == QLatin1String("Disconnected.");
+    });
+}
+
 // True when the CLI output contains a line that actually reports a failure.
 //
 // This deliberately anchors on the start of a line instead of searching the
@@ -81,6 +99,9 @@ void VpnManager::runCommand(const QStringList& args,
 {
     QProcess* process = new QProcess(this);
     const QString cmdLine = QStringLiteral("protonvpn ") + args.join(QLatin1Char(' '));
+    // `signout` itself may fail on a rejected session; it must not trigger
+    // another sign-out.
+    const bool isSignOut = args.value(0) == QLatin1String("signout");
     DBG_CLI(QStringLiteral(">>> ") + cmdLine);
 
     // Set when the watchdog gives up on the process, so finished() reports a
@@ -128,7 +149,7 @@ void VpnManager::runCommand(const QStringList& args,
             });
 
     connect(process, &QProcess::finished,
-            this, [process, callback, cmdLine, watchdog, timedOut](int exitCode, QProcess::ExitStatus)
+            this, [this, process, callback, cmdLine, isSignOut, watchdog, timedOut](int exitCode, QProcess::ExitStatus exitStatus)
             {
                 if (watchdog != nullptr)
                 {
@@ -140,10 +161,23 @@ void VpnManager::runCommand(const QStringList& args,
                 }
                 const QString out = QString::fromUtf8(process->readAllStandardOutput()).trimmed();
                 const QString err = QString::fromUtf8(process->readAllStandardError()).trimmed();
-                DBG_CLI(QStringLiteral("<<< ") + cmdLine +
-                        (*timedOut == true
-                             ? QStringLiteral(" [timed out]")
-                             : QStringLiteral(" [exit=") + QString::number(exitCode) + QStringLiteral("]")));
+                // A process ended by a signal reports the signal number as its
+                // exit code, which is indistinguishable from a real exit status
+                // (signal 1 vs exit(1)) unless the crash is logged as such.
+                QString outcome;
+                if (*timedOut == true)
+                {
+                    outcome = QStringLiteral(" [timed out]");
+                }
+                else if (exitStatus == QProcess::CrashExit)
+                {
+                    outcome = QStringLiteral(" [crashed: signal ") + QString::number(exitCode) + QStringLiteral("]");
+                }
+                else
+                {
+                    outcome = QStringLiteral(" [exit=") + QString::number(exitCode) + QStringLiteral("]");
+                }
+                DBG_CLI(QStringLiteral("<<< ") + cmdLine + outcome);
                 if (out.isEmpty() == false)
                 {
                     DBG_CLI(QStringLiteral("    stdout: ") + LogRedaction::cliOutput(out));
@@ -154,6 +188,19 @@ void VpnManager::runCommand(const QStringList& args,
                 }
                 callback(exitCode, out, err);
                 process->deleteLater();
+
+                // `protonvpn info` keeps reporting the saved account after the
+                // server has rejected the session, so whichever command first
+                // gets a 401 is how the app finds out. Clearing m_signedIn makes
+                // this fire once, even when several commands fail together.
+                if (exitCode != 0 && isSignOut == false && m_signedIn == true &&
+                    CliSession::requiresSignIn(out + QLatin1Char('\n') + err) == true)
+                {
+                    DBG_CLI(QStringLiteral("'") + cmdLine +
+                            QStringLiteral("' reports the session is no longer valid - signing out."));
+                    m_signedIn = false;
+                    emit sessionExpired();
+                }
             });
     auto [program, fullArgs] = buildCliCommand(args);
     process->start(program, fullArgs);
@@ -245,6 +292,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
             const bool loggedIn = (accountVal != QStringLiteral("None") && accountVal.isEmpty() == false);
             if (loggedIn)
             {
+                m_signedIn = true;
                 startStatusMonitor();
                 fetchAccountType();
                 emit loginStatusResult(true, accountVal);
@@ -252,6 +300,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
             else
             {
                 // Explicit "Account: 'None'" - genuinely not logged in, no point retrying.
+                m_signedIn = false;
                 emit loginStatusResult(false, QString());
             }
             return;
@@ -274,6 +323,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
         }
         else
         {
+            m_signedIn = false;
             emit loginStatusResult(false, QString());
         }
     }, LOGIN_CHECK_TIMEOUT_MS);
@@ -390,6 +440,7 @@ void VpnManager::login(const QString& username, const QString& password)
                 }
                 else
                 {
+                    m_signedIn = true;
                     startStatusMonitor();
                     fetchAccountType();
                 }
@@ -421,12 +472,19 @@ void VpnManager::submit2FA(const QString& token) const
 void VpnManager::signOut()
 {
     DBG_CLI(QStringLiteral("Signing out..."));
+    m_signedIn = false;
     stopStatusMonitor();
     runCommand({QStringLiteral("signout")}, [this](int exitCode, const QString&, const QString&)
     {
         DBG_CLI(exitCode == 0 ? QStringLiteral("Sign-out succeeded.") : QStringLiteral("Sign-out failed (exit=") + QString::number(exitCode) + QStringLiteral(")."));
         m_state = VpnState::Disconnected;
         emit signOutFinished(exitCode == 0);
+        // Announce the state, not just record it. The pages still show the last
+        // state they were sent - usually Error, when an expired session is what
+        // triggered this sign-out - and after the next sign-in the status
+        // monitor reports Disconnected, which already matches m_state, so no
+        // change would be emitted and the stale error would stay on screen.
+        emit connectionStateChanged(m_state, QString());
     });
 }
 
@@ -555,7 +613,9 @@ void VpnManager::issueConnect(const QString& country, const QString& city, int r
             return;
         }
 
-        if (retriesLeft > 0)
+        // Retrying cannot fix a missing session; runCommand() has already
+        // reported it, and the sign-out it triggers takes over from here.
+        if (retriesLeft > 0 && CliSession::requiresSignIn(out + QLatin1Char('\n') + err) == false)
         {
             const int attempt = AUTO_CONNECT_RETRIES - retriesLeft + 1;
             const int delayMs = attempt * 1000;
@@ -583,8 +643,13 @@ void VpnManager::disconnectVpn()
 
     runCommand({QStringLiteral("disconnect")}, [this](const int exitCode, const QString& out, const QString& err)
     {
-        if (exitCode == 0)
+        if (exitCode == 0 || reportsDisconnected(out) == true)
         {
+            if (exitCode != 0)
+            {
+                DBG_CLI(QStringLiteral("CLI confirmed the disconnect but exited with code ") +
+                        QString::number(exitCode) + QStringLiteral("; treating it as successful."));
+            }
             DBG_CLI(QStringLiteral("VPN disconnected successfully."));
             m_state = VpnState::Disconnected;
             emit connectionStateChanged(m_state, out);

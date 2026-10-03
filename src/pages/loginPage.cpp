@@ -91,6 +91,8 @@ LoginPage::LoginPage(QWidget* parent)
 
     // "View Details" button
     m_errorDetailsBtn = new QPushButton(tr("View Details"), m_errorContainer);
+    m_errorDetailsBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_errorDetailsBtn->setCursor(Qt::PointingHandCursor);
     m_errorDetailsBtn->setFixedWidth(ERROR_DETAILS_BTN_WIDTH);
     connect(m_errorDetailsBtn, &QPushButton::clicked, this, [this]()
     {
@@ -259,6 +261,7 @@ void LoginPage::buildTFAWidget()
     layout->addWidget(m_tfaSubmitBtn);
 
     m_tfaCancelBtn = new QPushButton(tr("Go Back"), m_tfaWidget);
+    m_tfaCancelBtn->setObjectName(QStringLiteral("secondaryButton"));
     m_tfaCancelBtn->setCursor(Qt::PointingHandCursor);
     connect(m_tfaCancelBtn, &QPushButton::clicked, this, [this]()
     {

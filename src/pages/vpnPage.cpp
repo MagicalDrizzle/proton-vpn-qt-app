@@ -971,6 +971,8 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
 
     // "View Details" button – shown only on error
     m_errorDetailsBtn = new QPushButton(tr("View Details"), scrollContent);
+    m_errorDetailsBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_errorDetailsBtn->setCursor(Qt::PointingHandCursor);
     m_errorDetailsBtn->setVisible(false);
     m_errorDetailsBtn->setFixedWidth(140);
     connect(m_errorDetailsBtn, &QPushButton::clicked, this, &VpnPage::showErrorDetails);

@@ -369,8 +369,16 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
 
+    // The CLI reported that the server rejected the session (from any command,
+    // not just connect). Sign out so the user lands on the login page instead
+    // of on a VPN page where every action fails.
+    connect(m_manager, &VpnManager::sessionExpired, m_manager, &VpnManager::signOut);
+
     connect(m_manager, &VpnManager::signOutFinished, this, [this](bool)
     {
+        // A startup auto-connect still waiting for its first Disconnected state
+        // must not fire on the one signOut() announces next, while signed out.
+        m_startupAutoConnectPending = false;
         m_loginPage->reset();
         m_sidebar->setEnabled(false);
         showPage(Page::Login);
@@ -381,23 +389,6 @@ MainWindow::MainWindow(QWidget* parent)
             {
                 m_vpnPage->onStateChanged(state, info);
                 updateTrayIcon(state);
-
-                // If the CLI reports that the session has expired / is not
-                // authenticated, sign the user out automatically so they land
-                // back on the login page rather than being stuck on an error.
-                if (state == VpnState::Error)
-                {
-                    const QString lower = info.toLower();
-                    const bool isAuthError =
-                        lower.contains(QLatin1String("authentication required")) ||
-                        lower.contains(QLatin1String("please sign in with"))     ||
-                        lower.contains(QLatin1String("401"));
-                    if (isAuthError)
-                    {
-                        m_manager->signOut();
-                        return;
-                    }
-                }
 
                 // Auto-connect: if we flagged a pending connect and we just confirmed
                 // the VPN is disconnected, initiate the connection now.

@@ -28,6 +28,10 @@ constexpr int RESTART_DELAY_MS = 5'000;
 // How long to wait for the subprocess to report that it started.
 constexpr int PROCESS_START_TIMEOUT_MS = 2000;
 
+// How long stop() waits for the killed monitor process to be reaped.
+// SIGKILL ends it immediately; this is only an upper bound.
+constexpr int KILL_REAP_TIMEOUT_MS = 1000;
+
 // Phrases that mean "there is no active connection" on CLI versions that print
 // a sentence instead of a "Status:" line. Recognizing them lets an otherwise
 // key-less snapshot still count as an authoritative Disconnected, so a genuinely
@@ -114,6 +118,10 @@ void StatusMonitor::stop()
     // auto-restart after we deliberately kill the process.
     disconnect(m_process, nullptr, this, nullptr);
     m_process->kill();
+    // Collect the killed process before deleting the QProcess. Deleting one
+    // whose child has not been reaped makes Qt warn "Destroyed while process
+    // is still running" and block in the destructor until it has been.
+    m_process->waitForFinished(KILL_REAP_TIMEOUT_MS);
     m_process->deleteLater();
     m_process = nullptr;
     m_buffer.clear();

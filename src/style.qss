@@ -184,33 +184,46 @@ QPushButton#primaryButton:disabled {
     color: #666680;
 }
 
-QPushButton#secondaryButton {
+/*  Also applied to the buttons Qt creates inside standard dialogs
+    (QMessageBox, QDialogButtonBox), which the app cannot give an object
+    name; without a rule they would be drawn by the native style.  */
+QPushButton#secondaryButton,
+QDialogButtonBox QPushButton {
     background-color: transparent;
     color: #9999bb;
     border: 1px solid #3a3a55;
     border-radius: 6px;
     padding: 4px 12px;
 }
-QPushButton#secondaryButton:hover {
+QPushButton#secondaryButton:hover,
+QDialogButtonBox QPushButton:hover {
     background-color: #2d2d4a;
     color: #eaeaea;
 }
 
-/*  Main button of a dialog (About's Close). Mirrors how Breeze draws a dialog
-    button, so builds running under Fusion (the AppImage) look the same.  */
-QPushButton#dialogButton {
+/*  Main button of a dialog (Close, Got It!, Download). Mirrors how Breeze
+    draws a dialog's default button, so builds running under Fusion (the
+    AppImage) look the same. A standard dialog's default button gets it too.  */
+QPushButton#dialogButton,
+QDialogButtonBox QPushButton:default {
     background-color: rgba(109, 74, 255, 0.2);
     color: palette(button-text);
     border: 1px solid #5847a9;
     border-radius: 4px;
-    padding: 6px 12px;
+    padding: 4px 12px;
 }
-QPushButton#dialogButton:hover {
+QPushButton#dialogButton:hover,
+QDialogButtonBox QPushButton:default:hover {
     background-color: rgba(109, 74, 255, 0.32);
     border-color: #6d4aff;
 }
-QPushButton#dialogButton:pressed {
+QPushButton#dialogButton:pressed,
+QDialogButtonBox QPushButton:default:pressed {
     background-color: rgba(109, 74, 255, 0.42);
+}
+
+QDialogButtonBox QPushButton {
+    min-width: 64px;
 }
 
 /* Floating overlay variant – same look as secondaryButton but with a solid
