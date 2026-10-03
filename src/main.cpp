@@ -13,6 +13,7 @@
 #include <QSystemTrayIcon>
 #include <QTranslator>
 #include "appConfig.h"
+#include "motionPreference.h"
 #include "cli/appImageUtils.h"
 #include "cli/flatpakUtils.h"
 #include "cli/platformUtils.h"
@@ -132,6 +133,9 @@ int main(int argc, char* argv[])
     // Apply theme (palette + stylesheet) based on saved preference.
     // This replaces the former hard-coded dark palette block.
     ThemeManager::apply(AppConfig::instance().theme());
+    // Asks the desktop for its reduce-motion preference now, so the answer is
+    // in before the VPN page decides whether to show its globe.
+    MotionPreference::instance().start();
 
     // Run one-time upgrade migrations before the main window is constructed.
     // lastSeenVersion() still holds the previous version at this point.

@@ -41,6 +41,13 @@ set(SOURCES
         favoritesManager.cpp
         geoUtils.h
         geoUtils.cpp
+        globe/globeMath.h
+        globe/globeRenderer.h
+        globe/globeRenderer.cpp
+        globe/countryCenters.h
+        globe/countryCenters.cpp
+        motionPreference.h
+        motionPreference.cpp
         jsonFile.h
         uiHelpers.h
         vpnManager.h
@@ -55,6 +62,8 @@ set(SOURCES
         cli/appImageUtils.h
         cli/cliNoiseFilter.h
         cli/cliSession.h
+        cli/cliSettings.h
+        cli/cliTable.h
         cli/logRedaction.h
         cli/flatpakUtils.h
         cli/platformUtils.h
@@ -62,8 +71,10 @@ set(SOURCES
         mainWindow.cpp
         widgets/elidaLabel.h
         widgets/infoBanner.h
-        widgets/flatpakBetaBanner.h
         widgets/numberSpinner.h
+        widgets/globeWidget.h
+        widgets/pixmapCache.h
+        widgets/globeWidget.cpp
         widgets/gripSplitter.h
         widgets/pickerBase.h
         widgets/pickerDrawer.h

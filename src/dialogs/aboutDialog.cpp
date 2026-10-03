@@ -165,9 +165,10 @@ AboutDialog::AboutDialog(const QString& installedCliVersion, QWidget* parent)
             "<li>%6</li>"
             "<li>%7</li>"
             "<li>%8</li>"
+            "<li>%9</li>"
             "</ul>"
             "<hr/>"
-            "<p style='color:#888;font-size:small;'>%9</p>")
+            "<p style='color:#888;font-size:small;'>%10</p>")
         .arg(
             tr("Disclaimer:"),
             tr("This project is <b>not affiliated with, endorsed by, or supported by Proton AG</b> "
@@ -179,6 +180,7 @@ AboutDialog::AboutDialog(const QString& installedCliVersion, QWidget* parent)
             tr("Icons from <a href='https://icons.getbootstrap.com/'>Bootstrap Icons</a> (MIT License)"),
             tr("Country flag SVGs from <a href='https://github.com/lipis/flag-icons'>flag-icons</a>"
                " by Panayiotis Lipiridis (MIT License)"),
+            tr("Globe map data from <a href='https://www.naturalearthdata.com/'>Natural Earth</a> (public domain)"),
             tr("This software is provided as-is, without warranty of any kind. Use at your own risk.")));
     layout->addWidget(browser);
 

@@ -1,16 +1,19 @@
 // protonvpnCli.cpp
 // All VpnManager methods that interact with the protonvpn CLI by spawning
-// a QProcess.  State management, settings, and polling infrastructure live
-// in vpnManager.cpp.
+// a QProcess.  State management, the settings file, and polling
+// infrastructure live in vpnManager.cpp.
 
 #include "../vpnManager.h"
 
 #include "../debug.h"
 #include "cliNoiseFilter.h"
 #include "cliSession.h"
+#include "cliSettings.h"
+#include "cliTable.h"
 #include "logRedaction.h"
 #include "flatpakUtils.h"
 #include "statusMonitor.h"
+#include "../uiHelpers.h"
 
 #include <QProcess>
 #include <QRegularExpression>
@@ -34,10 +37,10 @@ constexpr int MIN_COUNTRY_PARTS          = 2;
 constexpr int NETWORK_READY_CHECK_RETRIES = 5;
 constexpr int AUTO_CONNECT_RETRIES        = 5;
 
-// `protonvpn info` normally answers in well under a second. The limit is
-// generous because the CLI may be legitimately waiting on a keyring unlock
-// prompt the user is still typing into.
-constexpr int LOGIN_CHECK_TIMEOUT_MS = 30000;
+// `protonvpn info` and `protonvpn config list` normally answer in well under a
+// second. The limit is generous because the CLI may be legitimately waiting
+// on a keyring unlock prompt the user is still typing into.
+constexpr int KEYRING_PROMPT_TIMEOUT_MS = 30000;
 // How long a timed-out CLI gets to exit after SIGTERM before it is killed.
 constexpr int CLI_TERMINATE_GRACE_MS = 2000;
 // Exit codes runCommand() reports when the CLI never produced one of its own.
@@ -86,6 +89,19 @@ bool hasCliErrorLine(const QString& combined)
         if (l.contains(QLatin1String("incorrect login"))) return true;
     }
     return false;
+}
+
+// The rows of `protonvpn cities list` as (city, features), e.g.
+// {"Zurich", "P2P, Tor"}; features are empty for a city without any.
+QList<QPair<QString, QString>> parseCities(const QString& output)
+{
+    QList<QPair<QString, QString>> cities;
+    for (const QString& row : CliTable::rows(output))
+    {
+        const QStringList cells = CliTable::cells(row);
+        cities.append({cells.value(0), cells.value(1)});
+    }
+    return cities;
 }
 } // namespace
 
@@ -269,7 +285,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
         if (exitCode == CLI_EXIT_TIMED_OUT)
         {
             DBG_CLI(QStringLiteral("checkLoginStatus: protonvpn info did not respond within %1 ms.")
-                        .arg(LOGIN_CHECK_TIMEOUT_MS));
+                        .arg(KEYRING_PROMPT_TIMEOUT_MS));
             emit loginCheckTimedOut();
             return;
         }
@@ -295,6 +311,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
                 m_signedIn = true;
                 startStatusMonitor();
                 fetchAccountType();
+                fetchSettings();
                 emit loginStatusResult(true, accountVal);
             }
             else
@@ -326,7 +343,7 @@ void VpnManager::checkLoginStatus(int retriesLeft)
             m_signedIn = false;
             emit loginStatusResult(false, QString());
         }
-    }, LOGIN_CHECK_TIMEOUT_MS);
+    }, KEYRING_PROMPT_TIMEOUT_MS);
 }
 
 void VpnManager::login(const QString& username, const QString& password)
@@ -443,6 +460,7 @@ void VpnManager::login(const QString& username, const QString& password)
                     m_signedIn = true;
                     startStatusMonitor();
                     fetchAccountType();
+                    fetchSettings();
                 }
                 emit loginFinished(ok, errorMsg);
             });
@@ -494,28 +512,39 @@ void VpnManager::signOut()
 
 void VpnManager::connectVpn(const QString& country, const QString& city)
 {
-    DBG_CLI(QStringLiteral("Connecting to VPN - country: '") + (country.isEmpty() ? QStringLiteral("(fastest)") : country) +
-            QStringLiteral("'  city: '") + (city.isEmpty() ? QStringLiteral("(any)") : city) + QStringLiteral("'"));
+    beginConnect(country, city, QString());
+}
+
+void VpnManager::beginConnect(const QString& country, const QString& city, const QString& server)
+{
+    enterConnecting(QStringLiteral("Connecting to VPN"), country, city, server);
+    issueConnect(country, city, 0, server);
+}
+
+void VpnManager::enterConnecting(const QString& action, const QString& country, const QString& city,
+                                 const QString& server)
+{
+    if (server.isEmpty() == false)
+    {
+        DBG_CLI(action + QStringLiteral(" - server: '") + server + QStringLiteral("'"));
+    }
+    else
+    {
+        DBG_CLI(action + QStringLiteral(" - country: '") + (country.isEmpty() ? QStringLiteral("(fastest)") : country) +
+                QStringLiteral("'  city: '") + (city.isEmpty() ? QStringLiteral("(any)") : city) + QStringLiteral("'"));
+    }
     m_lastConnectCountry = country;
     m_lastConnectCity    = city;
+    m_lastConnectServer  = server;
     m_connectedServer.clear();
 
     m_state = VpnState::Connecting;
     emit connectionStateChanged(m_state, QString());
-
-    issueConnect(country, city, 0);
 }
 
 void VpnManager::startupAutoConnect(const QString& country, const QString& city)
 {
-    DBG_CLI(QStringLiteral("Auto-connecting to VPN on startup - country: '") + (country.isEmpty() ? QStringLiteral("(fastest)") : country) +
-            QStringLiteral("'  city: '") + (city.isEmpty() ? QStringLiteral("(any)") : city) + QStringLiteral("'"));
-    m_lastConnectCountry = country;
-    m_lastConnectCity    = city;
-    m_connectedServer.clear();
-
-    m_state = VpnState::Connecting;
-    emit connectionStateChanged(m_state, QString());
+    enterConnecting(QStringLiteral("Auto-connecting to VPN on startup"), country, city, QString());
 
     checkNetworkReady(NETWORK_READY_CHECK_RETRIES, [this, country, city]()
     {
@@ -583,19 +612,27 @@ void VpnManager::checkNetworkReady(int retriesLeft, const std::function<void()>&
     process->start(program, fullArgs);
 }
 
-void VpnManager::issueConnect(const QString& country, const QString& city, int retriesLeft)
+void VpnManager::issueConnect(const QString& country, const QString& city, int retriesLeft,
+                              const QString& server)
 {
     QStringList args{QStringLiteral("connect")};
-    if (country.isEmpty() == false)
+    if (server.isEmpty() == false)
     {
-        args << QStringLiteral("--country") << country;
+        args << server;
     }
-    if (city.isEmpty() == false)
+    else
     {
-        args << QStringLiteral("--city") << city;
+        if (country.isEmpty() == false)
+        {
+            args << QStringLiteral("--country") << country;
+        }
+        if (city.isEmpty() == false)
+        {
+            args << QStringLiteral("--city") << city;
+        }
     }
 
-    runCommand(args, [this, country, city, retriesLeft](int exitCode, const QString& out, const QString& err)
+    runCommand(args, [this, country, city, retriesLeft, server](int exitCode, const QString& out, const QString& err)
     {
         if (exitCode == 0)
         {
@@ -621,9 +658,9 @@ void VpnManager::issueConnect(const QString& country, const QString& city, int r
             const int delayMs = attempt * 1000;
             DBG_CLI(QStringLiteral("VPN connect attempt failed (exit=") + QString::number(exitCode) +
                     QStringLiteral("), retrying in ") + QString::number(delayMs) + QStringLiteral(" ms..."));
-            QTimer::singleShot(delayMs, this, [this, country, city, retriesLeft]()
+            QTimer::singleShot(delayMs, this, [this, country, city, retriesLeft, server]()
             {
-                issueConnect(country, city, retriesLeft - 1);
+                issueConnect(country, city, retriesLeft - 1, server);
             });
             return;
         }
@@ -676,14 +713,33 @@ void VpnManager::disconnectVpnSync()
 
 void VpnManager::applyConfigValueAndReconnect(const QString& key, const QString& value)
 {
-    const QString country = m_lastConnectCountry;
-    const QString city    = m_lastConnectCity;
+    // Back to the same place. That is what the app last asked for when it
+    // describes this connection; when it does not - the connection was
+    // already up when the app started, was made with the CLI, or went to the
+    // fastest server anywhere - it is the same server, by name. Reconnecting
+    // by country instead would land on whatever is fastest there now, and
+    // could drop a P2P, Secure Core, or Tor server the CLI was asked for.
+    QString country = m_lastConnectCountry;
+    QString city    = m_lastConnectCity;
+    QString server  = m_lastConnectServer;
+    const QString connectedName    = StatusMonitor::parseServerName(m_connectedServer);
+    const QString connectedCountry = StatusMonitor::parseCountryFromServer(m_connectedServer);
+    const bool requestDescribesConnection = connectedName.isEmpty() == true
+        || (server.isEmpty() == false && server.compare(connectedName, Qt::CaseInsensitive) == 0)
+        || (server.isEmpty() == true && country.isEmpty() == false
+            && country.compare(connectedCountry, Qt::CaseInsensitive) == 0);
+    if (requestDescribesConnection == false)
+    {
+        server  = connectedName;
+        country = connectedCountry; // for the UI while connecting; the name decides
+        city.clear();
+    }
 
     m_state = VpnState::Disconnecting;
     emit connectionStateChanged(m_state, QString());
 
     runCommand({QStringLiteral("disconnect")},
-               [this, key, value, country, city](int exitCode, const QString&, const QString& err)
+               [this, key, value, country, city, server](int exitCode, const QString&, const QString& err)
     {
         if (exitCode != 0)
         {
@@ -700,10 +756,11 @@ void VpnManager::applyConfigValueAndReconnect(const QString& key, const QString&
         args << key;
         args << value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
 
-        runCommand(args, [this, country, city](int, const QString& out, const QString& err2)
+        runCommand(args, [this, country, city, server](int, const QString& out, const QString& err2)
         {
             emit configApplied((out + QLatin1Char('\n') + err2).trimmed());
-            connectVpn(country, city);
+            fetchSettings();
+            beginConnect(country, city, server);
         });
     });
 }
@@ -719,29 +776,13 @@ void VpnManager::fetchCountries()
     {
         if (exitCode != 0)
             return;
-        const QString combined = out + QLatin1Char('\n') + err;
         QMap<QString, QString> countries;
-        const QStringList lines = combined.split(QLatin1Char('\n'));
-        // Output format: separator line starting with "--", then "Name   Code" rows.
-        bool pastSeparator = false;
-        for (const QString& line : lines)
+        // Rows are "Name   Code".
+        for (const QString& row : CliTable::rows(out + QLatin1Char('\n') + err))
         {
-            const QString trimmed = line.trimmed();
-            if (trimmed.isEmpty()) continue;
-            if (trimmed.startsWith(QStringLiteral("--")))
-            {
-                pastSeparator = true;
-                continue;
-            }
-            if (pastSeparator == false) continue;
-            const QStringList parts = line.split(QStringLiteral("  "), Qt::SkipEmptyParts);
-            if (parts.size() < MIN_COUNTRY_PARTS) continue;
-            const QString name = parts.first().trimmed();
-            const QString code = parts.last().trimmed();
-            if (name.isEmpty() == false && code.isEmpty() == false)
-            {
-                countries.insert(name, code);
-            }
+            const QStringList cells = CliTable::cells(row);
+            if (cells.size() < MIN_COUNTRY_PARTS) continue;
+            countries.insert(cells.first(), cells.last());
         }
         emit countriesReady(countries);
     });
@@ -754,30 +795,7 @@ void VpnManager::fetchCities(const QString& countryCode)
                {
                    if (exitCode != 0)
                        return; // not authenticated or other error - don't overwrite with an empty list
-                   const QString combined = out + QLatin1Char('\n') + err;
-                   QList<QPair<QString, QString>> cities;
-                   const QStringList lines = combined.split(QLatin1Char('\n'));
-                   // Output format: separator line, then "City   Features" rows.
-                   bool pastSeparator = false;
-                   for (const QString& line : lines)
-                   {
-                       const QString trimmed = line.trimmed();
-                       if (trimmed.isEmpty()) continue;
-                       if (trimmed.startsWith(QStringLiteral("--")))
-                       {
-                           pastSeparator = true;
-                           continue;
-                       }
-                       if (pastSeparator == false) continue;
-                       const QStringList parts = line.split(QStringLiteral("  "), Qt::SkipEmptyParts);
-                       const QString city     = parts.value(0).trimmed();
-                       const QString features = parts.value(1).trimmed();
-                       if (city.isEmpty() == false)
-                       {
-                           cities.append({city, features});
-                       }
-                   }
-                   emit citiesReady(countryCode, cities);
+                   emit citiesReady(countryCode, parseCities(out + QLatin1Char('\n') + err));
                });
 }
 
@@ -789,24 +807,11 @@ void VpnManager::fetchCityFeatures(const QString& countryCode, const QString& ci
                {
                    if (exitCode != 0)
                        return;
-                   const QString combined = out + QLatin1Char('\n') + err;
-                   const QStringList lines = combined.split(QLatin1Char('\n'));
-                   bool pastSeparator = false;
-                   for (const QString& line : lines)
+                   for (const auto& [name, features] : parseCities(out + QLatin1Char('\n') + err))
                    {
-                       const QString trimmed = line.trimmed();
-                       if (trimmed.isEmpty()) continue;
-                       if (trimmed.startsWith(QStringLiteral("--")))
+                       if (name.compare(city, Qt::CaseInsensitive) == 0)
                        {
-                           pastSeparator = true;
-                           continue;
-                       }
-                       if (pastSeparator == false) continue;
-                       const QStringList parts = line.split(QStringLiteral("  "), Qt::SkipEmptyParts);
-                       const QString cityName = parts.value(0).trimmed();
-                       if (cityName.compare(city, Qt::CaseInsensitive) == 0)
-                       {
-                           callback(parts.value(1).trimmed());
+                           callback(features);
                            return;
                        }
                    }
@@ -877,7 +882,7 @@ void VpnManager::fetchCliVersion()
 
 void VpnManager::applyConfig(const QString& key, const bool enabled)
 {
-    applyConfigValue(key, enabled == true ? QStringLiteral("on") : QStringLiteral("off"));
+    applyConfigValue(key, onOffString(enabled));
 }
 
 void VpnManager::applyConfigValue(const QString& key, const QString& value)
@@ -886,10 +891,58 @@ void VpnManager::applyConfigValue(const QString& key, const QString& value)
     QStringList args{QStringLiteral("config"), QStringLiteral("set"), key};
     args << value.split(QLatin1Char(' '), Qt::SkipEmptyParts);
 
+    ++m_configSetsInFlight;
     runCommand(args, [this](int, const QString& out, const QString& err)
     {
         const QString combined = (out + QLatin1Char('\n') + err).trimmed();
         emit configApplied(combined);
+        // Re-read once the last of several quick changes is in, so a reply
+        // from an earlier one cannot briefly undo a later one on screen. This
+        // also puts a rejected change back the way the CLI has it.
+        --m_configSetsInFlight;
+        if (m_configSetsInFlight == 0)
+        {
+            fetchSettings();
+        }
     });
+}
+
+void VpnManager::fetchSettings()
+{
+    runCommand({QStringLiteral("config"), QStringLiteral("list")},
+               [this](const int exitCode, const QString& out, const QString&)
+    {
+        QMap<QString, QString> settings = CliSettings::parseConfigList(out);
+        if (exitCode != 0 || settings.isEmpty() == true)
+        {
+            // The CLI could not answer (not signed in, or it failed): the file
+            // at least has every setting the user has changed.
+            DBG_CLI(QStringLiteral("Could not read settings from the CLI - using its settings file."));
+            settings = readSettingsFile();
+        }
+        else
+        {
+            // Custom DNS reads "off", "on", or "on  [1.1.1.1, 8.8.8.8, ...]";
+            // the Settings page wants "off", "on", or the full server list.
+            const QString dnsKey = QStringLiteral("custom-dns");
+            const QString dns = settings.value(dnsKey);
+            if (dns.startsWith(QLatin1String("on")) == true)
+            {
+                bool truncated = false;
+                QStringList servers = CliSettings::customDnsServers(dns, &truncated);
+                if (truncated == true)
+                {
+                    const QStringList saved = readSettingsFile().value(dnsKey).split(QLatin1Char(','));
+                    if (saved.size() > servers.size())
+                    {
+                        servers = saved;
+                    }
+                }
+                settings.insert(dnsKey, CliSettings::customDnsValue(servers));
+            }
+        }
+        m_settings = settings;
+        emit settingsReady(settings);
+    }, KEYRING_PROMPT_TIMEOUT_MS);
 }
 

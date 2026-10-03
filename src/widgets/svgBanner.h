@@ -2,18 +2,20 @@
 
 #include <QEvent>
 #include <QLayout>
-#include <QGuiApplication>
 #include <QPainter>
+#include <QPixmap>
 #include <QSvgRenderer>
 #include <QWidget>
+#include <tuple>
+#include "../themeManager.h"
+#include "pixmapCache.h"
 
 // SVG widget that scales to fill its parent's width up to a configurable maximum,
 // keeping a fixed aspect ratio (width / height, e.g. 4.0 for a 4:1 banner).
 // Optionally call setLightResource() to supply an alternate SVG for light themes.
 class SvgBanner : public QWidget
 {
-    static constexpr int DEFAULT_MAX_WIDTH               = 500;
-    static constexpr int LIGHT_THEME_LIGHTNESS_THRESHOLD = 128;
+    static constexpr int DEFAULT_MAX_WIDTH = 500;
 
 public:
     explicit SvgBanner(const QString& resource,
@@ -44,6 +46,8 @@ public:
     void setLightResource(const QString& resource)
     {
         m_lightRenderer = resource.isEmpty() ? nullptr : std::make_unique<QSvgRenderer>(resource);
+        // A new renderer may reuse the old one's address, which the key holds.
+        m_cache.clear();
         update();
     }
 
@@ -91,11 +95,22 @@ protected:
 
     void paintEvent(QPaintEvent*) override
     {
+        // Rendered once per size and theme and then reused: the VPN page's
+        // animated globe repaints the area behind the logo on every frame, and
+        // re-rendering the SVG each time was the bulk of that cost.
+        const qreal dpr = devicePixelRatioF();
+        QSvgRenderer* active = &activeRenderer();
+        const QPixmap& banner = m_cache.get({size(), dpr, active}, [this, dpr, active]()
+        {
+            QPixmap pixmap = blankPixmap(QSizeF(size()), dpr);
+            QPainter cachePainter(&pixmap);
+            cachePainter.setRenderHint(QPainter::Antialiasing);
+            active->render(&cachePainter, QRectF(QPointF(0, 0), QSizeF(size())));
+            cachePainter.end();
+            return pixmap;
+        });
         QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-
-        QSvgRenderer& active = activeRenderer();
-        active.render(&p, QRectF(rect()));
+        p.drawPixmap(0, 0, banner);
     }
 
     void resizeEvent(QResizeEvent* e) override
@@ -126,8 +141,7 @@ private:
     {
         if (m_lightRenderer != nullptr)
         {
-            const QColor windowColor = QGuiApplication::palette().color(QPalette::Window);
-            if (windowColor.lightness() >= LIGHT_THEME_LIGHTNESS_THRESHOLD)
+            if (ThemeManager::isDark() == false)
             {
                 return *m_lightRenderer;
             }
@@ -138,6 +152,8 @@ private:
 
     QSvgRenderer m_renderer;
     std::unique_ptr<QSvgRenderer> m_lightRenderer;
+    // By size, screen ratio and which theme's SVG it shows.
+    PixmapCache<std::tuple<QSize, qreal, const QSvgRenderer*>> m_cache;
     qreal m_aspect;
     int   m_maxWidth;
 };

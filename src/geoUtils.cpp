@@ -9,6 +9,7 @@
 #include <QSvgRenderer>
 #include <QTimeZone>
 #include "geoUtils.h"
+#include "widgets/pixmapCache.h"
 
 namespace GeoUtils
 {
@@ -556,9 +557,7 @@ QPixmap svgPixmap(const QString& resourcePath, int width, int height)
     const qreal dpr = (qApp != nullptr) ? qApp->devicePixelRatio() : 1.0;
 
     QSvgRenderer renderer(resourcePath);
-    QPixmap pixmap(qRound(width * dpr), qRound(height * dpr));
-    pixmap.setDevicePixelRatio(dpr);
-    pixmap.fill(Qt::transparent);
+    QPixmap pixmap = blankPixmap(QSizeF(width, height), dpr);
     QPainter painter(&pixmap);
     renderer.render(&painter);
     return pixmap;

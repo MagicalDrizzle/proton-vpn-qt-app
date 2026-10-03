@@ -69,9 +69,6 @@ constexpr int LOGO_BTN_SIZE          = 56;
 constexpr int NAV_ICON_SIZE          = 24;
 constexpr int NAV_BTN_SIZE           = 48;
 
-// Theme tint detection: lightness() returns 0–255; below midpoint = dark palette
-constexpr int DARK_THEME_LIGHTNESS_THRESHOLD = 128;
-
 // Proton dark-theme nav tint color (#1a1a2e)
 constexpr int DARK_BG_R = 0x1a;
 constexpr int DARK_BG_G = 0x1a;
@@ -103,8 +100,7 @@ QIcon svgNavIcon(const QString& path, const QSize& size = {NAV_ICON_SIZE, NAV_IC
         return QIcon(GeoUtils::svgPixmap(path, size.width(), size.height()));
     }
 
-    const QColor windowColor = QApplication::palette().color(QPalette::Window);
-    const QColor tintColor = (windowColor.lightness() < DARK_THEME_LIGHTNESS_THRESHOLD)
+    const QColor tintColor = ThemeManager::isDark() == true
                                  ? QColor(Qt::white)
                                  : QColor(DARK_BG_R, DARK_BG_G, DARK_BG_B);
     return QIcon(GeoUtils::svgPixmap(path, size.width(), size.height(), tintColor));
@@ -286,6 +282,8 @@ MainWindow::MainWindow(QWidget* parent)
             m_vpnPage, &VpnPage::refreshRecentPicker);
     connect(m_settingsPage, &SettingsPage::locationPickerVisibilityChanged,
             m_vpnPage, &VpnPage::setLocationPickerVisible);
+    connect(m_settingsPage, &SettingsPage::globeSettingsChanged,
+            m_vpnPage, &VpnPage::applyGlobeSettings);
     connect(m_settingsPage, &SettingsPage::favoritesDropdownVisibilityChanged,
             m_vpnPage, &VpnPage::setFavoritesDropdownVisible);
     connect(m_settingsPage, &SettingsPage::favoritesEnabledChanged,

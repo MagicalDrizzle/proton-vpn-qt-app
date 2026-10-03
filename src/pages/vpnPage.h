@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <tuple>
 #include <QElapsedTimer>
 #include <QPushButton>
 #include <QTimer>
@@ -13,8 +14,9 @@
 #include "../widgets/pickerBase.h"
 #include "../widgets/pickerDrawer.h"
 #include "../widgets/infoBanner.h"
-#include "../widgets/flatpakBetaBanner.h"
+#include "../widgets/pixmapCache.h"
 #include "../widgets/svgBanner.h"
+#include "../widgets/globeWidget.h"
 #include <QGridLayout>
 #include "../dialogs/errorDetailsDialog.h"
 
@@ -52,6 +54,9 @@ protected:
 private:
     RingState m_state = RingState::Unknown;
     qreal m_scale = 1.0;
+    // The power icon by size, screen ratio and theme: the background globe
+    // repaints the button on every frame.
+    PixmapCache<std::tuple<int, qreal, bool>> m_iconCache;
     qreal m_spinAngle = 0.0;
     bool m_hovered = false;
     bool m_pressed = false;
@@ -158,6 +163,9 @@ public:
     explicit VpnPage(VpnManager* manager, QWidget* parent = nullptr);
 
     void onStateChanged(VpnState state, const QString& info);
+    // Applies the globe settings: shows or removes it per Globe Animation and
+    // the desktop's reduce-motion preference, and sets Pause When Unfocused.
+    void applyGlobeSettings();
     void notifyExternalConnect(const QString& city);
     void refreshRecentPicker() const;
     void refreshFavoritesPicker() const;
@@ -246,7 +254,6 @@ private:
 
     InfoBanner*     m_versionBanner = nullptr;
     InfoBanner*     m_prereleaseBanner = nullptr;
-    FlatpakBetaBanner*  m_flatpakBetaBanner  = nullptr;
     QTimer*         m_elapsedTimer;
     QTimer*         m_checkingSpinnerTimer;
     // Monotonic reference for the connection duration display; the label is
@@ -260,6 +267,8 @@ private:
     QLabel*         m_portLabel     = nullptr;
     NatPmpManager*  m_natPmpManager = nullptr;
     InfoBanner*     m_natpmpcBanner = nullptr;
+    // The port forwarding setting as last seen, to act only when it changes.
+    bool            m_portForwardingOn = false;
 
     VpnState m_currentState = VpnState::Unknown;
     QString  m_activeCity;
@@ -290,12 +299,19 @@ private:
     void repositionDrawerNotch(int drawerW);
     void updateDrawerNotchIcon();
     void checkPrereleaseBanner();
-    void checkFlatpakBetaBanner();
     void updateBannerAreaVisibility();
     // Scales the logo, power button, status text and their spacing with the
     // page size; 1 at the default window size (see vpnPage.cpp).
     void updateContentScale();
     qreal m_contentScale = 1.0;
+
+    // Background globe and the country it should face (see updateGlobeTarget()).
+    GlobeWidget* m_globe = nullptr;
+    // Country of the current connection as reported by `protonvpn status`;
+    // cleared when a new connection starts or the connection ends.
+    QString m_globeStatusCountry;
+    void updateGlobeTarget();
+    void syncInfoBackdrop() const;
     // Wide mode only: chooses between the content spanning the full width
     // above the dropdowns and sitting in a column beside them.
     void updateWideArrangement();
@@ -304,7 +320,11 @@ private:
     void applyFreeUserMode() const;
     void startNatPmpLoop();
     void stopNatPmpLoop();
+    // Stops the keep-alive and hides the forwarded port, and nothing more:
+    // stopNatPmpLoop() also forgets the connection, for a disconnect.
+    void stopPortForwarding();
     void showNatpmpcBanner();
+    void dismissNatpmpcBanner();
     void refreshConnectedInfoLabel() const;
     // After populate(), try to select m_pendingStatusCity; falls back to
     void applyPendingStatusCity();

@@ -64,6 +64,10 @@ QString buildLoopCommand()
                           "sleep 15; "
                           "done'").arg(vpnCmd);
 }
+
+// Between the server name and its location in a `protonvpn status` server
+// string: "US-NJ#203 in Secaucus, United States".
+const QString SERVER_LOCATION_SEPARATOR = QStringLiteral(" in ");
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -284,10 +288,30 @@ QMap<QString, QString> StatusMonitor::parseStatusFields(const QString& combined)
 // static
 QString StatusMonitor::parseCityFromServer(const QString& server)
 {
-    const int inPos = server.indexOf(QStringLiteral(" in "));
+    const int inPos = server.indexOf(SERVER_LOCATION_SEPARATOR);
     if (inPos < 0)
         return {};
-    const QString rest    = server.mid(inPos + 4);
+    const QString rest    = server.mid(inPos + SERVER_LOCATION_SEPARATOR.size());
     const int    commaPos = rest.indexOf(QLatin1Char(','));
     return (commaPos >= 0 ? rest.left(commaPos) : rest).trimmed();
+}
+
+// static
+QString StatusMonitor::parseServerName(const QString& server)
+{
+    const int inPos = server.indexOf(SERVER_LOCATION_SEPARATOR);
+    return (inPos >= 0 ? server.left(inPos) : server).trimmed();
+}
+
+// static
+QString StatusMonitor::parseCountryFromServer(const QString& server)
+{
+    // The country code runs up to the first '-' (region or Secure Core
+    // entry follows) or '#' (server number follows), whichever comes first.
+    const QString name = parseServerName(server);
+    const int dashPos = name.indexOf(QLatin1Char('-'));
+    const int hashPos = name.indexOf(QLatin1Char('#'));
+    const int endPos  = (dashPos >= 0 && (hashPos < 0 || dashPos < hashPos))
+                        ? dashPos : hashPos;
+    return endPos > 0 ? name.left(endPos).toUpper() : QString();
 }

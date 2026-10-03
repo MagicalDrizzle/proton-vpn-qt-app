@@ -11,6 +11,9 @@ class AppConfig
 {
 public:
     enum class Theme { System, Dark, Light };
+    // The VPN page's background globe: Auto follows the desktop's reduce-motion
+    // preference (see MotionPreference), On and Off override it.
+    enum class GlobeAnimation { Auto, On, Off };
 
     static AppConfig &instance();
 
@@ -32,6 +35,13 @@ public:
     // True when closing the window hides to the tray instead of quitting.
     bool closeToTray() const;
     Theme theme() const;
+    GlobeAnimation globeAnimation() const;
+    // Stop the globe's idle spin while the window does not have focus.
+    bool globePauseWhenUnfocused() const;
+    // Single source of truth for the GlobeAnimation <-> config-string mapping.
+    static QString globeAnimationName(GlobeAnimation value);
+    // The reverse; anything unrecognized is Auto, the default.
+    static GlobeAnimation globeAnimationFromName(const QString& name);
     bool showLocationPicker() const;
     bool showFavoritesDropdown() const;
     bool favoritesEnabled() const;
@@ -48,6 +58,8 @@ public:
     void setStartHidden(bool value);
     void setCloseToTray(bool value);
     void setTheme(Theme value);
+    void setGlobeAnimation(GlobeAnimation value);
+    void setGlobePauseWhenUnfocused(bool value);
     void setShowLocationPicker(bool value);
     void setShowFavoritesDropdown(bool value);
     void setFavoritesEnabled(bool value);
@@ -82,6 +94,8 @@ private:
     bool m_closeToTray = true;
     double m_splitViewCountriesRatio = SPLIT_RATIO_DEFAULT;
     Theme m_theme = Theme::System;
+    GlobeAnimation m_globeAnimation = GlobeAnimation::Auto;
+    bool m_globePauseWhenUnfocused = false;
     bool m_showLocationPicker = true;
     bool m_showFavoritesDropdown = true;
     bool m_favoritesEnabled = true;

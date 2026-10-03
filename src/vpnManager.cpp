@@ -10,8 +10,10 @@
 // ReSharper disable once CppUnusedIncludeDirective
 #include <QJsonDocument>
 #include <QJsonObject>
+#include "cli/cliSettings.h"
 #include "cli/statusMonitor.h"
 #include "debug.h"
+#include "uiHelpers.h"
 #include "vpnManager.h"
 
 namespace
@@ -28,23 +30,25 @@ constexpr int NETSHIELD_MODE_FULL         = 2;
 } // namespace
 
 VpnManager::VpnManager(QObject* parent)
-    : QObject(parent)
+    : QObject(parent),
+      // A first answer for portForwardingEnabled() before the CLI is asked.
+      m_settings(readSettingsFile())
 {
 }
 
 // ---------------------------------------------------------------------------
-// Settings (file-based - no CLI involved)
+// Settings file (no CLI involved; fetchSettings() is in protonvpnCli.cpp)
 // ---------------------------------------------------------------------------
 
-void VpnManager::fetchSettings()
+// static
+QMap<QString, QString> VpnManager::readSettingsFile()
 {
     QMap<QString, QString> settings;
 
     QFile f(getSettingsFilePath());
     if (f.open(QIODevice::ReadOnly) == false)
     {
-        emit settingsReady(settings);
-        return;
+        return settings;
     }
 
     const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
@@ -52,16 +56,10 @@ void VpnManager::fetchSettings()
 
     if (doc.isObject() == false)
     {
-        emit settingsReady(settings);
-        return;
+        return settings;
     }
 
     const QJsonObject root = doc.object();
-
-    auto boolStr = [](const bool b) -> QString
-    {
-        return b ? QStringLiteral("on") : QStringLiteral("off");
-    };
 
     if (root.contains(QStringLiteral("killswitch")))
     {
@@ -73,13 +71,13 @@ void VpnManager::fetchSettings()
     if (root.contains(QStringLiteral("ipv6")))
     {
         settings.insert(QStringLiteral("ipv6"),
-                        boolStr(root[QStringLiteral("ipv6")].toBool()));
+                        onOffString(root[QStringLiteral("ipv6")].toBool()));
     }
 
     if (root.contains(QStringLiteral("anonymous_crash_reports")))
     {
         settings.insert(QStringLiteral("anonymous-crash-reports"),
-                        boolStr(root[QStringLiteral("anonymous_crash_reports")].toBool()));
+                        onOffString(root[QStringLiteral("anonymous_crash_reports")].toBool()));
     }
 
     if (root.contains(QStringLiteral("custom_dns")))
@@ -92,10 +90,16 @@ void VpnManager::fetchSettings()
             QStringList ips;
             for (const auto& v : ipList)
             {
-                ips << v.toString();
+                // The CLI saves each server as {"ip": "1.1.1.1", "enabled": true};
+                // plain strings are accepted too.
+                const QString ip = v.isObject() == true ? v.toObject().value(QStringLiteral("ip")).toString()
+                                                        : v.toString();
+                if (ip.isEmpty() == false)
+                {
+                    ips << ip;
+                }
             }
-            settings.insert(QStringLiteral("custom-dns"),
-                            ips.isEmpty() ? QStringLiteral("on") : ips.join(QLatin1Char(',')));
+            settings.insert(QStringLiteral("custom-dns"), CliSettings::customDnsValue(ips));
         }
         else
         {
@@ -129,37 +133,28 @@ void VpnManager::fetchSettings()
         if (feat.contains(QStringLiteral("moderate_nat")))
         {
             settings.insert(QStringLiteral("moderate-nat"),
-                            boolStr(feat[QStringLiteral("moderate_nat")].toBool()));
+                            onOffString(feat[QStringLiteral("moderate_nat")].toBool()));
         }
 
         if (feat.contains(QStringLiteral("vpn_accelerator")))
         {
             settings.insert(QStringLiteral("vpn-accelerator"),
-                            boolStr(feat[QStringLiteral("vpn_accelerator")].toBool()));
+                            onOffString(feat[QStringLiteral("vpn_accelerator")].toBool()));
         }
 
         if (feat.contains(QStringLiteral("port_forwarding")))
         {
             settings.insert(QStringLiteral("port-forwarding"),
-                            boolStr(feat[QStringLiteral("port_forwarding")].toBool()));
+                            onOffString(feat[QStringLiteral("port_forwarding")].toBool()));
         }
     }
 
-    emit settingsReady(settings);
+    return settings;
 }
 
 bool VpnManager::portForwardingEnabled() const
 {
-    QFile f(getSettingsFilePath());
-    if (f.open(QIODevice::ReadOnly) == false)
-        return false;
-    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
-    f.close();
-    if (doc.isObject() == false)
-        return false;
-    return doc.object()
-               .value(QStringLiteral("features")).toObject()
-               .value(QStringLiteral("port_forwarding")).toBool(false);
+    return isOnString(m_settings.value(QStringLiteral("port-forwarding")));
 }
 
 // ---------------------------------------------------------------------------
@@ -253,18 +248,7 @@ void VpnManager::applyStatusFields(const QMap<QString, QString>& fields)
                         QStringLiteral("Connected to %1.").arg(server);
 
     // Country code - e.g. "US" from "US-NJ#203 in Secaucus, United States".
-    QString countryCode;
-    if (server.isEmpty() == false)
-    {
-        const int dashPos = server.indexOf(QLatin1Char('-'));
-        const int hashPos = server.indexOf(QLatin1Char('#'));
-        const int endPos  = (dashPos >= 0 && (hashPos < 0 || dashPos < hashPos))
-                            ? dashPos : hashPos;
-        if (endPos > 0)
-        {
-            countryCode = server.left(endPos).toUpper();
-        }
-    }
+    const QString countryCode = StatusMonitor::parseCountryFromServer(server);
 
     const VpnState prevState  = m_state;
     const QString  prevServer = m_connectedServer;

@@ -1,6 +1,5 @@
 #include "loginPage.h"
 #include "../geoUtils.h"
-#include "../widgets/flatpakBetaBanner.h"
 #include "../widgets/svgBanner.h"
 
 #include <QFile>
@@ -124,7 +123,6 @@ LoginPage::LoginPage(QWidget* parent)
 
     // Show a banner if this is a pre-release build
     checkPrereleaseBanner();
-    checkFlatpakBetaBanner();
 }
 
 void LoginPage::buildCredsWidget()
@@ -387,18 +385,6 @@ void LoginPage::checkPrereleaseBanner()
         m_prereleaseBanner = nullptr;
     });
     m_bannerLayout->addWidget(m_prereleaseBanner);
-    m_bannerScrollArea->setVisible(true);
-}
-
-void LoginPage::checkFlatpakBetaBanner()
-{
-    m_flatpakBetaBanner = FlatpakBetaBanner::createIfFlatpak(this);
-    if (m_flatpakBetaBanner == nullptr) return;
-    connect(m_flatpakBetaBanner, &FlatpakBetaBanner::dismissed, this, [this]()
-    {
-        m_flatpakBetaBanner = nullptr;
-    });
-    m_bannerLayout->addWidget(m_flatpakBetaBanner);
     m_bannerScrollArea->setVisible(true);
 }
 

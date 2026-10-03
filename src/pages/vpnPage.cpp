@@ -4,8 +4,10 @@
 #include "../connectionHistory.h"
 #include "../favoritesManager.h"
 #include "../uiHelpers.h"
+#include "../motionPreference.h"
+#include "../themeManager.h"
+#include "../globe/countryCenters.h"
 #include "../widgets/svgBanner.h"
-#include "../widgets/flatpakBetaBanner.h"
 #include "../widgets/starButton.h"
 #include "../widgets/styleUtils.h"
 
@@ -18,6 +20,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QTextDocument>
 #include <QPropertyAnimation>
 #include <QGuiApplication>
 #include <QClipboard>
@@ -44,7 +47,6 @@ constexpr int   SPIN_ARC_SPAN_16TH     = -270 * 16;
 constexpr int   SPIN_ANIM_DURATION_MS  = 900;
 constexpr int   FOCUS_RING_WIDTH       = 2;
 constexpr qreal FOCUS_RING_INSET       = 1.5;
-constexpr int   LIGHTNESS_MIDPOINT     = 128;
 constexpr QColor SPIN_ARC_COLOR(0xa0, 0xa0, 0xa0);
 constexpr QColor RING_CONNECTED_COLOR(0x1a, 0x9c, 0x5b);
 constexpr QColor RING_DISCONNECTED_COLOR(0xd6, 0x3f, 0x3f);
@@ -92,6 +94,9 @@ constexpr int   LOGO_MAX_WIDTH             = 500;
 constexpr int   CENTERED_CONTENT_GAP       = 16;
 // Label property holding the font style.qss gives the label (see scaleLabelFont()).
 constexpr const char* BASE_FONT_PROPERTY   = "baseFont";
+// Extra width given to the info label beyond its text, so rounding never
+// pushes the last word onto a line of its own.
+constexpr int   INFO_LABEL_SLACK           = 4;
 constexpr int   PAGE_H_MARGIN              = 40;
 constexpr int   LOGO_TOP_MARGIN            = 40;
 constexpr int   TOP_SECTION_SPACING        = 24;
@@ -338,14 +343,17 @@ void PowerButton::paintEvent(QPaintEvent*)
     // pixmap stretched by the painter would come out blurry.
     p.resetTransform();
     const int iconSize = qRound(ICON_SIZE * m_scale);
-    const bool darkMode = palette().color(QPalette::Window).lightness() < LIGHTNESS_MIDPOINT;
-    const QPixmap iconPix = darkMode
-        ? GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), iconSize, QColor(Qt::white))
-        : GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), iconSize);
+    const bool darkMode = ThemeManager::isDark();
+    const QPixmap& icon = m_iconCache.get({iconSize, devicePixelRatioF(), darkMode}, [iconSize, darkMode]()
+    {
+        return darkMode
+            ? GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), iconSize, QColor(Qt::white))
+            : GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), iconSize);
+    });
     // Point overload, not the rect one: the pixmap is already exactly
     // iconSize in device-independent pixels, so this blits it without any
     // rescaling on HiDPI screens.
-    p.drawPixmap(QPointF((width() - iconSize) / 2.0, (height() - iconSize) / 2.0), iconPix);
+    p.drawPixmap(QPointF((width() - iconSize) / 2.0, (height() - iconSize) / 2.0), icon);
 }
 
 void PowerButton::mousePressEvent(QMouseEvent* e)
@@ -882,6 +890,18 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     // area via m_scrollOffsetWidget, keeping content clear of the drawer overlay.
     outerLayout->setContentsMargins(0, 0, 0, 0);
 
+    // Background globe: created first so every other child stacks above it.
+    // Not in the layout; resizeEvent() keeps it covering the whole page.
+    m_globe = new GlobeWidget(this);
+    if (m_localCountryCode.isEmpty() == false)
+    {
+        const std::optional<GeoPoint> home = CountryCenters::find(m_localCountryCode);
+        if (home.has_value() == true)
+        {
+            m_globe->setSpinLongitude(home->longitude);
+        }
+    }
+
     //  Logo row - always at the top, full width
     m_logoRow = new QWidget(this);
     m_logoRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -927,6 +947,7 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
         }
     });
     topLayout->addWidget(m_powerBtn, 0, Qt::AlignCenter);
+    m_globe->setAnchor(m_powerBtn);
 
     // Status text
     m_statusLabel = new QLabel(tr("Checking\u2026"), m_topContentWidget);
@@ -1009,8 +1030,10 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_infoLabel->setAlignment(Qt::AlignCenter);
     rememberBaseFont(m_infoLabel);
     m_infoLabel->setWordWrap(true);
-    m_infoLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-    scrollLayout->addWidget(m_infoLabel);
+    // Sized to its text and centered, so its backdrop over the globe is a pill
+    // around the words rather than a band across the whole page.
+    m_infoLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    scrollLayout->addWidget(m_infoLabel, 0, Qt::AlignHCenter);
 
     // Sign-out hint - shown only when a CLI error is detected
     m_signOutHintLabel = new QLabel(scrollContent);
@@ -1163,25 +1186,29 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
 
     // If the user enables/disables port forwarding while already connected,
     // start or stop the natpmpc loop immediately without waiting for reconnect.
-    connect(m_manager, &VpnManager::configApplied, this, [this](const QString&)
+    // The manager re-reads the settings after every change, so this follows
+    // what the CLI actually has rather than what was asked for.
+    m_portForwardingOn = m_manager->portForwardingEnabled();
+    connect(m_manager, &VpnManager::settingsReady, this, [this](const QMap<QString, QString>&)
     {
-        if (m_currentState == VpnState::Connected)
+        const bool on = m_manager->portForwardingEnabled();
+        if (on == m_portForwardingOn) return;
+        m_portForwardingOn = on;
+        if (m_currentState != VpnState::Connected) return;
+
+        if (on == true)
         {
-            if (m_manager->portForwardingEnabled() == true)
-            {
-                startNatPmpLoop();
-            }
-            else
-            {
-                stopNatPmpLoop();
-                // Remove the "natpmpc not installed" banner if it is still visible.
-                if (m_natpmpcBanner != nullptr)
-                {
-                    m_natpmpcBanner->deleteLater();
-                    m_natpmpcBanner = nullptr;
-                }
-            }
+            startNatPmpLoop();
         }
+        else
+        {
+            // Not stopNatPmpLoop(): that is disconnect cleanup and would also
+            // forget this connection's info text and country.
+            stopPortForwarding();
+            dismissNatpmpcBanner();
+        }
+        // Adds or removes the "Port forwarding is active" line.
+        refreshConnectedInfoLabel();
     });
 
     // Track the country code of the currently connected server so we can look
@@ -1189,7 +1216,12 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     connect(m_manager, &VpnManager::connectionCountryKnown, this, [this](const QString& cc)
     {
         m_connectedCountryCode = cc;
+        m_globeStatusCountry = cc;
+        updateGlobeTarget();
     });
+
+    connect(&MotionPreference::instance(), &MotionPreference::changed, this, &VpnPage::applyGlobeSettings);
+    applyGlobeSettings();
 
     //  NatPmpManager
     m_natPmpManager = new NatPmpManager(this);
@@ -1220,7 +1252,6 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     });
     // Show a banner if this is a pre-release build
     checkPrereleaseBanner();
-    checkFlatpakBetaBanner();
 
     // React to plan type (Free vs Plus) - affects picker visibility and connect behaviour.
     connect(m_manager, &VpnManager::accountTypeReady, this, [this](AccountType type)
@@ -1372,7 +1403,7 @@ void VpnPage::buildPortRow(QWidget* parent, QVBoxLayout* layout)
     layout->addWidget(m_portRow, 0, Qt::AlignCenter);
 }
 
-// Builds the warnings area (pre-release / Flatpak banners) plus its
+// Builds the warnings area (the pre-release banner) plus its
 // header and "Clear All" button. Lives at the bottom of the scroll content in
 // narrow mode; applyWideMode() moves it into the picker sidebar.
 void VpnPage::buildBannerArea(QVBoxLayout* scrollLayout)
@@ -1399,10 +1430,6 @@ void VpnPage::buildBannerArea(QVBoxLayout* scrollLayout)
         if (m_prereleaseBanner != nullptr)
         {
             m_prereleaseBanner->dismiss();
-        }
-        if (m_flatpakBetaBanner != nullptr)
-        {
-            m_flatpakBetaBanner->dismiss();
         }
     });
     bannerHeaderLayout->addWidget(m_warningsHeaderLabel);
@@ -1742,8 +1769,7 @@ void VpnPage::updateDrawerNotchIcon()
     const QString path = m_drawer->isExpanded() == true
         ? QStringLiteral(":/assets/arrow-bar-left.svg")
         : QStringLiteral(":/assets/arrow-bar-right.svg");
-    const QColor windowColor = QGuiApplication::palette().color(QPalette::Window);
-    const QColor tintColor = (windowColor.lightness() < LIGHTNESS_MIDPOINT)
+    const QColor tintColor = ThemeManager::isDark() == true
         ? NOTCH_ICON_COLOR_DARK_BG
         : NOTCH_ICON_COLOR_LIGHT_BG;
     m_drawerNotchIcon->setPixmap(GeoUtils::svgPixmap(path, SMALL_ICON_PIX, tintColor));
@@ -1761,9 +1787,11 @@ void VpnPage::changeEvent(QEvent* event)
 void VpnPage::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    m_globe->setGeometry(rect());
     applyWideMode(event->size().width() >= kWideThreshold);
     updateContentScale();
     scheduleWideArrangement();
+    syncInfoBackdrop();
     if (m_wideMode == false && m_drawer != nullptr)
     {
         repositionDrawer();
@@ -1821,6 +1849,7 @@ void VpnPage::updateWideArrangement()
     }
     if (centered == m_wideCentered) return;
     m_wideCentered = centered;
+    m_globe->anchorMoved();
 
     m_wideGrid->removeWidget(m_pickerSidebar);
     m_wideGrid->removeWidget(m_rightContent);
@@ -1861,6 +1890,8 @@ void VpnPage::updateContentScale()
     scaleLabelFont(m_statusLabel, scale);
     scaleLabelFont(m_timerLabel, scale);
     scaleLabelFont(m_infoLabel, scale);
+    syncInfoBackdrop();
+    m_globe->anchorMoved();
 }
 
 void VpnPage::onCitiesReady(const QString& countryCode,
@@ -1925,23 +1956,9 @@ void VpnPage::checkPrereleaseBanner()
     updateBannerAreaVisibility();
 }
 
-void VpnPage::checkFlatpakBetaBanner()
-{
-    m_flatpakBetaBanner = FlatpakBetaBanner::createIfFlatpak(this);
-    if (m_flatpakBetaBanner == nullptr) return;
-    connect(m_flatpakBetaBanner, &FlatpakBetaBanner::dismissed, this, [this]()
-    {
-        m_flatpakBetaBanner = nullptr;
-        updateBannerAreaVisibility();
-    });
-    m_vpnBannerLayout->addWidget(m_flatpakBetaBanner);
-    updateBannerAreaVisibility();
-}
-
 void VpnPage::updateBannerAreaVisibility()
 {
-    const int count = (m_prereleaseBanner  != nullptr ? 1 : 0)
-                    + (m_flatpakBetaBanner != nullptr ? 1 : 0);
+    const int count = m_prereleaseBanner != nullptr ? 1 : 0;
     const bool hasAny = count > 0;
     m_vpnBannerArea->setVisible(hasAny);
     if (m_warningsHeaderLabel != nullptr)
@@ -2005,6 +2022,44 @@ void VpnPage::onCliVersionReady(const QString& version)
 void VpnPage::onStateChanged(const VpnState state, const QString& info)
 {
     updateUi(state, info);
+
+    // A status-reported country belongs to one connection: forget it when a
+    // new one starts (it may go elsewhere) and when the connection ends.
+    if (state == VpnState::Connecting || state == VpnState::Disconnected || state == VpnState::Error)
+    {
+        m_globeStatusCountry.clear();
+    }
+    updateGlobeTarget();
+}
+
+void VpnPage::applyGlobeSettings()
+{
+    m_globe->setPauseWhenInactive(AppConfig::instance().globePauseWhenUnfocused());
+    m_globe->setVisible(MotionPreference::instance().animationEnabled(AppConfig::instance().globeAnimation()));
+}
+
+// Faces the country being connected to, or connected to; spins otherwise.
+void VpnPage::updateGlobeTarget()
+{
+    QString country;
+    switch (m_currentState)
+    {
+        case VpnState::Connecting:
+            // Empty for "fastest server": the destination is not known yet.
+            country = m_manager->lastConnectCountry();
+            break;
+
+        case VpnState::Connected:
+        case VpnState::Disconnecting:
+            // `protonvpn status` names the server actually in use; fall back to
+            // the requested country until the first status poll reports it.
+            country = m_globeStatusCountry.isEmpty() ? m_manager->lastConnectCountry() : m_globeStatusCountry;
+            break;
+
+        default:
+            break;
+    }
+    m_globe->setTarget(country.isEmpty() ? std::nullopt : CountryCenters::find(country));
 }
 
 void VpnPage::updateUi(const VpnState state, const QString& info)
@@ -2201,6 +2256,33 @@ void VpnPage::updateUi(const VpnState state, const QString& info)
             stopElapsedTimer();
             break;
     }
+    syncInfoBackdrop();
+}
+
+// The info label's backdrop over the globe (style.qss) would show as an empty
+// pill whenever the label has no text, so it is switched off then. The label
+// is also sized to its text: a word-wrapped QLabel left to pick its own width
+// squeezes short text into a narrow column, and stretched across the page its
+// backdrop would be a band rather than a pill.
+void VpnPage::syncInfoBackdrop() const
+{
+    setStyleProperty(m_infoLabel, "empty", m_infoLabel->text().isEmpty());
+
+    QTextDocument doc;
+    doc.setDefaultFont(m_infoLabel->font());
+    if (m_infoLabel->textFormat() == Qt::RichText
+        || (m_infoLabel->textFormat() == Qt::AutoText && Qt::mightBeRichText(m_infoLabel->text())))
+    {
+        doc.setHtml(m_infoLabel->text());
+    }
+    else
+    {
+        doc.setPlainText(m_infoLabel->text());
+    }
+    const QMargins frame = m_infoLabel->contentsMargins();
+    const int chrome = frame.left() + frame.right() + INFO_LABEL_SLACK;
+    const int available = std::max(0, m_scrollArea->viewport()->width() - 2 * PAGE_H_MARGIN);
+    m_infoLabel->setFixedWidth(std::min(available, static_cast<int>(std::ceil(doc.idealWidth())) + chrome));
 }
 
 void VpnPage::startElapsedTimer()
@@ -2259,6 +2341,7 @@ void VpnPage::refreshConnectedInfoLabel() const
     }
 
     m_infoLabel->setText(text);
+    syncInfoBackdrop();
 }
 
 void VpnPage::startNatPmpLoop()
@@ -2271,11 +2354,7 @@ void VpnPage::startNatPmpLoop()
 
     // natpmpc is available - dismiss any stale "not installed" banner that
     // may have been shown before the user installed the package at runtime.
-    if (m_natpmpcBanner != nullptr)
-    {
-        m_natpmpcBanner->deleteLater();
-        m_natpmpcBanner = nullptr;
-    }
+    dismissNatpmpcBanner();
 
     // refresh() fires an immediate port-mapping request whether or not the
     // keep-alive loop was already running, preventing a 45-second wait.
@@ -2311,15 +2390,28 @@ void VpnPage::showNatpmpcBanner()
 
 void VpnPage::stopNatPmpLoop()
 {
-    m_natPmpManager->stop();
+    stopPortForwarding();
 
     m_currentCityFeatures.clear();
     m_lastConnectedInfo.clear();
     m_connectedCountryCode.clear();
+}
 
+void VpnPage::stopPortForwarding()
+{
+    m_natPmpManager->stop();
     if (m_portRow != nullptr)
     {
         m_portRow->setVisible(false);
+    }
+}
+
+void VpnPage::dismissNatpmpcBanner()
+{
+    if (m_natpmpcBanner != nullptr)
+    {
+        m_natpmpcBanner->deleteLater();
+        m_natpmpcBanner = nullptr;
     }
 }
 

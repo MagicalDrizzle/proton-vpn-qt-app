@@ -53,7 +53,7 @@ inline QString translatedFeatureTooltip(const FeatureMeta& meta)
     return QCoreApplication::translate("FeatureMeta", meta.tooltip);
 }
 
-//  Settings on/off helper
+//  Settings on/off helpers
 // Returns true for the common CLI truthy strings.
 inline bool isOnString(const QString& v)
 {
@@ -61,5 +61,11 @@ inline bool isOnString(const QString& v)
         || v == QLatin1String("true")
         || v == QLatin1String("1")
         || v == QLatin1String("enabled");
+}
+
+// "on" or "off", as the CLI's settings and the app's logs write a toggle.
+inline QString onOffString(const bool on)
+{
+    return on == true ? QStringLiteral("on") : QStringLiteral("off");
 }
 

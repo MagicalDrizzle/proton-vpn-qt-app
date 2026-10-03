@@ -75,11 +75,56 @@ add_qt_test(tst_cliNoiseFilter
     ../cli/cliNoiseFilter.h
 )
 
+#  Globe (math, renderer, country centers)
+add_qt_test(tst_globe
+    tst_globe.cpp
+    ../globe/globeMath.h
+    ../globe/globeRenderer.h
+    ../globe/globeRenderer.cpp
+    ../globe/countryCenters.h
+    ../globe/countryCenters.cpp
+    # The country center table is a compiled-in resource.
+    ../resources.qrc
+)
+target_link_libraries(tst_globe Qt6::Gui)
+
+#  MotionPreference
+add_qt_test(tst_motionPreference
+    tst_motionPreference.cpp
+    ../motionPreference.h
+    ../motionPreference.cpp
+    ../appConfig.h
+    ../appConfig.cpp
+    ../fileLogger.h
+    ../fileLogger.cpp
+)
+target_link_libraries(tst_motionPreference Qt6::DBus)
+
 #  CliSession (header-only)
 add_qt_test(tst_cliSession
     tst_cliSession.cpp
     ../cli/cliSession.h
 )
+
+#  CliSettings (header-only)
+add_qt_test(tst_cliSettings
+    tst_cliSettings.cpp
+    ../cli/cliSettings.h
+    ../cli/cliTable.h
+)
+
+#  CliTable (header-only)
+add_qt_test(tst_cliTable
+    tst_cliTable.cpp
+    ../cli/cliTable.h
+)
+
+#  PixmapCache (header-only)
+add_qt_test(tst_pixmapCache
+    tst_pixmapCache.cpp
+    ../widgets/pixmapCache.h
+)
+target_link_libraries(tst_pixmapCache Qt6::Gui)
 
 #  LogRedaction (header-only)
 add_qt_test(tst_logRedaction

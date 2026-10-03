@@ -662,3 +662,26 @@ QLabel#locationPickerBottom[dimmed="true"] { color: #666677; }
 /*  Account plan value  */
 QLabel#infoValue[plan="free"] { color: #aaaaaa; font-weight: normal; }
 QLabel#infoValue[plan="plus"] { color: #7B61FF; font-weight: bold; }
+
+/*  ==========================================================================
+    VPN page background globe
+    ========================================================================== */
+
+/*  Every plain container on the VPN page lets the globe show through. Widgets
+    with background rules of their own (pickers, drawer, banners, buttons) keep
+    them: those rules are more specific than this one.  */
+VpnPage QWidget {
+    background-color: transparent;
+}
+
+/*  Text over the globe sits on a partly transparent backdrop to stay legible.  */
+QLabel#vpnStatusLabel,
+QLabel#timerLabel,
+QLabel#infoLabel {
+    background-color: rgba(26, 26, 46, 0.72);
+    border-radius: 8px;
+    padding: 2px 12px;
+}
+QLabel#infoLabel[empty="true"] {
+    background-color: transparent;
+}

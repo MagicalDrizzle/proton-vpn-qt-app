@@ -1,5 +1,7 @@
 #include "settingsPage.h"
 #include "../appConfig.h"
+#include "../motionPreference.h"
+#include "../cli/cliSettings.h"
 #include "../connectionHistory.h"
 #include "../debug.h"
 #include "../favoritesManager.h"
@@ -18,6 +20,7 @@
 #include <QDebug>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QSignalBlocker>
 #include <QFontDatabase>
 #include <QFrame>
 #include <QGraphicsOpacityEffect>
@@ -39,6 +42,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <tuple>
 
 namespace
 {
@@ -159,6 +163,19 @@ QWidget* makeTextCol(QWidget* parent, const QString& label, const QString& desc)
         col->addWidget(descL);
     }
     return w;
+}
+
+// A setting row: its name and description on the left, and on the right
+// whatever control the caller adds to the returned layout.
+std::pair<QWidget*, QHBoxLayout*> makeSettingRow(QWidget* parent, const QString& label, const QString& desc)
+{
+    QWidget* row = new QWidget(parent);
+    QHBoxLayout* rl = new QHBoxLayout(row);
+    rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
+                           SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
+    rl->setSpacing(SETTING_ROW_SPACING);
+    rl->addWidget(makeTextCol(row, label, desc), 1);
+    return {row, rl};
 }
 } // namespace
 
@@ -285,12 +302,7 @@ QWidget* SettingsPage::makeToggleRow(QWidget* parent, const QString& label,
                                      const QString& desc, const QString& cliKey,
                                      const QString& onValue, const bool requiresReconnect)
 {
-    QWidget* row = new QWidget(parent);
-    QHBoxLayout* rl = new QHBoxLayout(row);
-    rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                           SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-    rl->setSpacing(SETTING_ROW_SPACING);
-    rl->addWidget(makeTextCol(row, label, desc), 1);
+    auto [row, rl] = makeSettingRow(parent, label, desc);
     ToggleWithStatus* toggle = new ToggleWithStatus(row);
     rl->addWidget(toggle, 0);
 
@@ -326,12 +338,7 @@ QWidget* SettingsPage::makeComboRow(QWidget* parent, const QString& label,
                                     const QStringList& labels, const QStringList& cliValues,
                                     const bool requiresReconnect)
 {
-    QWidget* row = new QWidget(parent);
-    QHBoxLayout* rl = new QHBoxLayout(row);
-    rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                           SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-    rl->setSpacing(SETTING_ROW_SPACING);
-    rl->addWidget(makeTextCol(row, label, desc), 1);
+    auto [row, rl] = makeSettingRow(parent, label, desc);
     QComboBox* combo = new QComboBox(row);
     for (const auto& l : labels)
     {
@@ -385,6 +392,18 @@ QWidget* SettingsPage::makeComboRow(QWidget* parent, const QString& label,
 // static
 std::pair<QWidget*, QVBoxLayout*> SettingsPage::makeTabCard(QWidget* tabPage)
 {
+    QWidget* card = new QWidget();
+    card->setObjectName(QStringLiteral("infoCard"));
+    QVBoxLayout* cardLayout = new QVBoxLayout(card);
+    cardLayout->setContentsMargins(0, 0, 0, 0);
+    cardLayout->setSpacing(0);
+    addTabScrollArea(tabPage, card);
+    return {card, cardLayout};
+}
+
+// static
+void SettingsPage::addTabScrollArea(QWidget* tabPage, QWidget* content)
+{
     QScrollArea* scroll = new QScrollArea(tabPage);
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
@@ -398,14 +417,51 @@ std::pair<QWidget*, QVBoxLayout*> SettingsPage::makeTabCard(QWidget* tabPage)
     pageLayout->setContentsMargins(0, PAGE_LAYOUT_TOP_MARGIN, 0, 0);
     pageLayout->setSpacing(PAGE_LAYOUT_SPACING);
     pageLayout->addWidget(scroll, 1);
+    scroll->setWidget(content);
+}
 
-    QWidget* card = new QWidget();
+// static
+std::pair<QWidget*, QVBoxLayout*> SettingsPage::makeSectionedTab(QWidget* tabPage)
+{
+    QWidget* content = new QWidget();
+    QVBoxLayout* contentLayout = new QVBoxLayout(content);
+    contentLayout->setContentsMargins(0, 0, 0, APP_CONTENT_BOT_MARGIN);
+    contentLayout->setSpacing(PAGE_LAYOUT_SPACING);
+    addTabScrollArea(tabPage, content);
+    return {content, contentLayout};
+}
+
+// static
+void SettingsPage::addSectionHeader(QWidget* parent, QVBoxLayout* layout, const QString& title)
+{
+    if (layout->count() > 0)
+    {
+        QFrame* sep = new QFrame(parent);
+        sep->setFrameShape(QFrame::HLine);
+        sep->setObjectName(QStringLiteral("appSectionDivider"));
+        layout->addWidget(sep);
+    }
+
+    QWidget* w = new QWidget(parent);
+    QHBoxLayout* hl = new QHBoxLayout(w);
+    hl->setContentsMargins(SECTION_HEADER_LEFT_MARGIN, SECTION_HEADER_TOP_MARGIN,
+                           SECTION_HEADER_H_MARGIN, SECTION_HEADER_BOT_MARGIN);
+    QLabel* lbl = new QLabel(title.toUpper(), w);
+    lbl->setObjectName(QStringLiteral("appSectionHeader"));
+    hl->addWidget(lbl);
+    layout->addWidget(w);
+}
+
+// static
+std::pair<QWidget*, QVBoxLayout*> SettingsPage::addSectionCard(QWidget* parent, QVBoxLayout* layout)
+{
+    QWidget* card = new QWidget(parent);
     card->setObjectName(QStringLiteral("infoCard"));
-    QVBoxLayout* cardLayout = new QVBoxLayout(card);
-    cardLayout->setContentsMargins(0, 0, 0, 0);
-    cardLayout->setSpacing(0);
-    scroll->setWidget(card);
-    return {card, cardLayout};
+    QVBoxLayout* cl = new QVBoxLayout(card);
+    cl->setContentsMargins(0, 0, 0, 0);
+    cl->setSpacing(0);
+    layout->addWidget(card);
+    return {card, cl};
 }
 
 // App tab: startup, notifications, history, favorites, logging, about.
@@ -418,63 +474,16 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
     tabs->addTab(appTab, tr("App"));
 
     {
-        QScrollArea* scroll = new QScrollArea(appTab);
-        scroll->setWidgetResizable(true);
-        scroll->setFrameShape(QFrame::NoFrame);
-        // See the comment on the equivalent construction in makeTabCard() above.
-        QVBoxLayout* pageLayout = new QVBoxLayout(appTab);
-        pageLayout->setContentsMargins(0, PAGE_LAYOUT_TOP_MARGIN, 0, 0);
-        pageLayout->setSpacing(0);
-        pageLayout->addWidget(scroll, 1);
-        QWidget* appContent = new QWidget();
-        QVBoxLayout* appContentLayout = new QVBoxLayout(appContent);
-        appContentLayout->setContentsMargins(0, 0, 0, APP_CONTENT_BOT_MARGIN);
-        appContentLayout->setSpacing(PAGE_LAYOUT_SPACING);
-        scroll->setWidget(appContent);
+        auto [appContent, appContentLayout] = makeSectionedTab(appTab);
 
-        bool appFirstSection = true;
         auto addHeader = [&](const QString& title)
         {
-            if (appFirstSection == false)
-            {
-                QFrame* sep = new QFrame(appContent);
-                sep->setFrameShape(QFrame::HLine);
-                sep->setObjectName(QStringLiteral("appSectionDivider"));
-                appContentLayout->addWidget(sep);
-            }
-            appFirstSection = false;
-
-            QWidget* w = new QWidget(appContent);
-            QHBoxLayout* hl = new QHBoxLayout(w);
-            hl->setContentsMargins(SECTION_HEADER_LEFT_MARGIN, SECTION_HEADER_TOP_MARGIN,
-                                   SECTION_HEADER_H_MARGIN, SECTION_HEADER_BOT_MARGIN);
-            QLabel* lbl = new QLabel(title.toUpper(), w);
-            lbl->setObjectName(QStringLiteral("appSectionHeader"));
-            hl->addWidget(lbl);
-            appContentLayout->addWidget(w);
+            addSectionHeader(appContent, appContentLayout, title);
         };
 
         auto makeAppCard = [&]() -> std::pair<QWidget*, QVBoxLayout*>
         {
-            QWidget* card = new QWidget(appContent);
-            card->setObjectName(QStringLiteral("infoCard"));
-            QVBoxLayout* cl = new QVBoxLayout(card);
-            cl->setContentsMargins(0, 0, 0, 0);
-            cl->setSpacing(0);
-            appContentLayout->addWidget(card);
-            return {card, cl};
-        };
-
-        auto makeSubCard = [&](QWidget* parent, QVBoxLayout* parentLayout)
-            -> std::pair<QWidget*, QVBoxLayout*>
-        {
-            QWidget* card = new QWidget(parent);
-            card->setObjectName(QStringLiteral("infoCard"));
-            QVBoxLayout* cl = new QVBoxLayout(card);
-            cl->setContentsMargins(0, 0, 0, 0);
-            cl->setSpacing(0);
-            parentLayout->addWidget(card);
-            return {card, cl};
+            return addSectionCard(appContent, appContentLayout);
         };
 
         //  Section: Startup
@@ -493,14 +502,10 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         };
 
         {
-            m_autoStartRow = new QWidget(startupCard);
-            QHBoxLayout* rl = new QHBoxLayout(m_autoStartRow);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(m_autoStartRow,
-                                      tr("Launch on Startup"),
-                                      tr("Start Proton VPN automatically when you log in.")), 1);
+            QHBoxLayout* rl = nullptr;
+            std::tie(m_autoStartRow, rl) = makeSettingRow(startupCard,
+                                                          tr("Launch on Startup"),
+                                                          tr("Start Proton VPN automatically when you log in."));
             m_autoStartToggle = new ToggleWithStatus(m_autoStartRow);
             m_autoStartToggle->setOn(autoStartEnabled(), false);
             connect(m_autoStartToggle, &ToggleWithStatus::toggled, this, [this](const bool on)
@@ -576,15 +581,10 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
 
         // Start Hidden
         {
-            QWidget* row = new QWidget(startupCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Start Hidden"),
-                                      tr("Launch the app in the background without opening a "
-                                         "window. Access it anytime via the system tray icon.")), 1);
+            auto [row, rl] = makeSettingRow(startupCard,
+                                            tr("Start Hidden"),
+                                            tr("Launch the app in the background without opening a "
+                                               "window. Access it anytime via the system tray icon."));
             ToggleWithStatus* toggle = new ToggleWithStatus(row);
             toggle->setOn(AppConfig::instance().startHidden(), false);
             connect(toggle, &ToggleWithStatus::toggled, this, [](const bool on)
@@ -600,16 +600,11 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         auto [windowCard, windowLayout] = makeAppCard();
 
         {
-            QWidget* row = new QWidget(windowCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Close to Tray"),
-                                      tr("Closing the window keeps ProtonVPN running in the "
-                                         "system tray. Turn this off to quit the app when the "
-                                         "window is closed.")), 1);
+            auto [row, rl] = makeSettingRow(windowCard,
+                                            tr("Close to Tray"),
+                                            tr("Closing the window keeps ProtonVPN running in the "
+                                               "system tray. Turn this off to quit the app when the "
+                                               "window is closed."));
             ToggleWithStatus* closeToTrayToggle = new ToggleWithStatus(row);
             closeToTrayToggle->setOn(AppConfig::instance().closeToTray(), false);
             connect(closeToTrayToggle, &ToggleWithStatus::toggled, this, [](const bool on)
@@ -636,15 +631,10 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         (void)notifLayout;
 
         {
-            QWidget* row = new QWidget(notifCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Desktop Notifications"),
-                                      tr("Show a system notification when the VPN is connecting, "
-                                         "connected, disconnecting, or disconnected.")), 1);
+            auto [row, rl] = makeSettingRow(notifCard,
+                                            tr("Desktop Notifications"),
+                                            tr("Show a system notification when the VPN is connecting, "
+                                               "connected, disconnecting, or disconnected."));
             m_notificationsToggle = new ToggleWithStatus(row);
             m_notificationsToggle->setOn(AppConfig::instance().notifications(), false);
             connect(m_notificationsToggle, &ToggleWithStatus::toggled, this, [](const bool on)
@@ -657,15 +647,10 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
 
         {
             addDivider(notifLayout, notifCard);
-            QWidget* row = new QWidget(notifCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Check for Updates on Startup"),
-                                      tr("Automatically check for a newer version of the app "
-                                         "each time it starts.")), 1);
+            auto [row, rl] = makeSettingRow(notifCard,
+                                            tr("Check for Updates on Startup"),
+                                            tr("Automatically check for a newer version of the app "
+                                               "each time it starts."));
             ToggleWithStatus* updateToggle = new ToggleWithStatus(row);
             updateToggle->setOn(AppConfig::instance().checkForUpdates(), false);
             connect(updateToggle, &ToggleWithStatus::toggled, this, [](const bool on)
@@ -689,32 +674,9 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         appPlusSectionLayout->setSpacing(PAGE_LAYOUT_SPACING);
         appContentLayout->addWidget(m_appPlusSection);
 
-        // Section header helper that targets m_appPlusSection
-        bool plusFirstSection = true;
-        auto addPlusHeader = [&](const QString& title)
-        {
-            if (plusFirstSection == false)
-            {
-                QFrame* sep = new QFrame(m_appPlusSection);
-                sep->setFrameShape(QFrame::HLine);
-                sep->setObjectName(QStringLiteral("appSectionDivider"));
-                appPlusSectionLayout->addWidget(sep);
-            }
-            plusFirstSection = false;
-
-            QWidget* w = new QWidget(m_appPlusSection);
-            QHBoxLayout* hl = new QHBoxLayout(w);
-            hl->setContentsMargins(SECTION_HEADER_LEFT_MARGIN, SECTION_HEADER_TOP_MARGIN,
-                                   SECTION_HEADER_H_MARGIN, SECTION_HEADER_BOT_MARGIN);
-            QLabel* lbl = new QLabel(title.toUpper(), w);
-            lbl->setObjectName(QStringLiteral("appSectionHeader"));
-            hl->addWidget(lbl);
-            appPlusSectionLayout->addWidget(w);
-        };
-
         //  Sub-section: Connection History
-        addPlusHeader(tr("Connection History"));
-        auto [histCard, histLayout] = makeSubCard(m_appPlusSection, appPlusSectionLayout);
+        addSectionHeader(m_appPlusSection, appPlusSectionLayout, tr("Connection History"));
+        auto [histCard, histLayout] = addSectionCard(m_appPlusSection, appPlusSectionLayout);
 
         bool histFirst = true;
         auto addHist = [&](QWidget* w)
@@ -728,15 +690,10 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         };
 
         {
-            QWidget* row = new QWidget(histCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Recent Connections"),
-                                      tr("Number of recent VPN connections to remember and show "
-                                         "on the home screen. Set to 0 to disable.")), 1);
+            auto [row, rl] = makeSettingRow(histCard,
+                                            tr("Recent Connections"),
+                                            tr("Number of recent VPN connections to remember and show "
+                                               "on the home screen. Set to 0 to disable."));
             m_recentConnectionsSpinBox = new NumberSpinner(row);
             m_recentConnectionsSpinBox->setRange(0, RECENT_CONNECTIONS_MAX);
             m_recentConnectionsSpinBox->setValue(AppConfig::instance().recentConnectionsCount());
@@ -759,14 +716,9 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
             div->setFrameShape(QFrame::HLine);
             div->setObjectName(QStringLiteral("divider"));
             cLayout->addWidget(div);
-            QWidget* inner = new QWidget(m_clearRecentRow);
-            QHBoxLayout* rl = new QHBoxLayout(inner);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(inner,
-                                      tr("Clear Recent Connections"),
-                                      tr("Remove all saved recent connection history.")), 1);
+            auto [inner, rl] = makeSettingRow(m_clearRecentRow,
+                                              tr("Clear Recent Connections"),
+                                              tr("Remove all saved recent connection history."));
             QPushButton* clearBtn = new QPushButton(tr("Clear"), inner);
             clearBtn->setObjectName(QStringLiteral("dangerButton"));
             clearBtn->setCursor(Qt::PointingHandCursor);
@@ -788,8 +740,8 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         }
 
         //  Sub-section: Favorites
-        addPlusHeader(tr("Favorites"));
-        auto [favCard, favLayout] = makeSubCard(m_appPlusSection, appPlusSectionLayout);
+        addSectionHeader(m_appPlusSection, appPlusSectionLayout, tr("Favorites"));
+        auto [favCard, favLayout] = addSectionCard(m_appPlusSection, appPlusSectionLayout);
 
         bool favFirst = true;
         auto addFav = [&](QWidget* w)
@@ -804,14 +756,9 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
 
         // Enable Favorites
         {
-            QWidget* row = new QWidget(favCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Enable Favorites"),
-                                      tr("Allow marking VPN locations as favorites for quick access.")), 1);
+            auto [row, rl] = makeSettingRow(favCard,
+                                            tr("Enable Favorites"),
+                                            tr("Allow marking VPN locations as favorites for quick access."));
             ToggleWithStatus* toggle = new ToggleWithStatus(row);
             toggle->setOn(AppConfig::instance().favoritesEnabled(), false);
             connect(toggle, &ToggleWithStatus::toggled, this, [this](const bool on)
@@ -841,14 +788,9 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
             div->setFrameShape(QFrame::HLine);
             div->setObjectName(QStringLiteral("divider"));
             cLayout->addWidget(div);
-            QWidget* inner = new QWidget(m_clearFavoritesRow);
-            QHBoxLayout* rl = new QHBoxLayout(inner);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(inner,
-                                      tr("Clear Favorites"),
-                                      tr("Remove all saved favorite locations.")), 1);
+            auto [inner, rl] = makeSettingRow(m_clearFavoritesRow,
+                                              tr("Clear Favorites"),
+                                              tr("Remove all saved favorite locations."));
             QPushButton* clearBtn = new QPushButton(tr("Clear"), inner);
             clearBtn->setObjectName(QStringLiteral("dangerButton"));
             clearBtn->setCursor(Qt::PointingHandCursor);
@@ -874,16 +816,11 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
         auto [loggingCard, loggingLayout] = makeAppCard();
 
         {
-            QWidget* row = new QWidget(loggingCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Write Logs to File"),
-                                      tr("Save diagnostic logs to disk for troubleshooting. "
-                                         "The %1 most recent log files are kept.")
-                                          .arg(FileLogger::MAX_ROTATED_LOGS)), 1);
+            auto [row, rl] = makeSettingRow(loggingCard,
+                                            tr("Write Logs to File"),
+                                            tr("Save diagnostic logs to disk for troubleshooting. "
+                                               "The %1 most recent log files are kept.")
+                                                .arg(FileLogger::MAX_ROTATED_LOGS));
             ToggleWithStatus* logToFileToggle = new ToggleWithStatus(row);
             logToFileToggle->setOn(AppConfig::instance().logToFile(), false);
             connect(logToFileToggle, &ToggleWithStatus::toggled, this, [](const bool on)
@@ -905,18 +842,13 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
                 SETTING_ROW_H_MARGIN,
                 QColor(QStringLiteral("#9999bb")));
 
-            m_aboutRow = new QWidget(aboutCard);
+            QHBoxLayout* rl = nullptr;
+            std::tie(m_aboutRow, rl) = makeSettingRow(aboutCard,
+                                                      tr("About Proton VPN"),
+                                                      tr("View app version, licenses, and credits."));
             m_aboutRow->setObjectName(QStringLiteral("appNavRow"));
             m_aboutRow->setCursor(Qt::PointingHandCursor);
             m_aboutRow->installEventFilter(this);
-
-            QHBoxLayout* rl = new QHBoxLayout(m_aboutRow);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(m_aboutRow,
-                                      tr("About Proton VPN"),
-                                      tr("View app version, licenses, and credits.")), 1);
             QLabel* iconLbl = new QLabel(m_aboutRow);
             iconLbl->setPixmap(arrowPm);
             iconLbl->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -928,7 +860,7 @@ void SettingsPage::buildAppTab(QTabWidget* tabs)
     } // end App tab scroll area
 }
 
-// Appearance tab: theme and which pickers the VPN page shows.
+// Appearance tab: theme, the VPN page's globe, and which pickers it shows.
 void SettingsPage::buildAppearanceTab(QTabWidget* tabs)
 {
     // ============================================================
@@ -936,30 +868,18 @@ void SettingsPage::buildAppearanceTab(QTabWidget* tabs)
     // ============================================================
     {
         QWidget* appearanceTab = new QWidget();
-        auto [appearanceCard, appearanceCardLayout] = makeTabCard(appearanceTab);
+        auto [appearanceContent, appearanceContentLayout] = makeSectionedTab(appearanceTab);
         tabs->addTab(appearanceTab, tr("Appearance"));
 
-        bool appearanceFirst = true;
-        auto addAppearance = [&](QWidget* w)
-        {
-            if (appearanceFirst == false)
-            {
-                addDivider(appearanceCardLayout, appearanceCard);
-            }
-            appearanceFirst = false;
-            appearanceCardLayout->addWidget(w);
-        };
+        //  Section: General
+        addSectionHeader(appearanceContent, appearanceContentLayout, tr("General"));
+        auto [generalCard, generalLayout] = addSectionCard(appearanceContent, appearanceContentLayout);
 
         //  Theme
         {
-            QWidget* row = new QWidget(appearanceCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Theme"),
-                                      tr("Choose the color scheme for the app.")), 1);
+            auto [row, rl] = makeSettingRow(generalCard,
+                                            tr("Theme"),
+                                            tr("Choose the color scheme for the app."));
             m_themeCombo = new QComboBox(row);
             m_themeCombo->addItem(tr("System Settings"), QStringLiteral("system"));
             m_themeCombo->addItem(tr("Dark"),            QStringLiteral("dark"));
@@ -982,19 +902,63 @@ void SettingsPage::buildAppearanceTab(QTabWidget* tabs)
             });
 
             rl->addWidget(m_themeCombo);
-            addAppearance(row);
+            generalLayout->addWidget(row);
         }
+
+        //  Section: Globe
+        addSectionHeader(appearanceContent, appearanceContentLayout, tr("Globe"));
+        auto [globeCard, globeLayout] = addSectionCard(appearanceContent, appearanceContentLayout);
+
+        //  Globe Animation
+        {
+            auto [row, rl] = makeSettingRow(globeCard, tr("Animation"), globeDescription());
+            m_globeDescLabel = row->findChild<QLabel*>(QStringLiteral("settingsDesc"));
+            m_globeCombo = new QComboBox(row);
+            populateGlobeCombo();
+            connect(m_globeCombo, &QComboBox::currentIndexChanged, this, [this](int)
+            {
+                const AppConfig::GlobeAnimation setting =
+                    AppConfig::globeAnimationFromName(m_globeCombo->currentData().toString());
+                AppConfig::instance().setGlobeAnimation(setting);
+                updateGlobePauseToggle();
+                emit globeSettingsChanged();
+            });
+            // Detection is asynchronous: "Auto" appears once the desktop answers.
+            connect(&MotionPreference::instance(), &MotionPreference::changed,
+                    this, &SettingsPage::populateGlobeCombo);
+
+            rl->addWidget(m_globeCombo);
+            globeLayout->addWidget(row);
+        }
+
+        //  Pause Globe When Unfocused
+        {
+            addDivider(globeLayout, globeCard);
+            auto [row, rl] = makeSettingRow(globeCard,
+                                            tr("Pause When Unfocused"),
+                                            tr("Stop the globe from spinning while another window has focus, "
+                                               "to save CPU."));
+            m_globePauseToggle = new ToggleWithStatus(row);
+            m_globePauseToggle->setOn(AppConfig::instance().globePauseWhenUnfocused(), false);
+            updateGlobePauseToggle();
+            connect(m_globePauseToggle, &ToggleWithStatus::toggled, this, [this](const bool on)
+            {
+                AppConfig::instance().setGlobePauseWhenUnfocused(on);
+                emit globeSettingsChanged();
+            });
+            rl->addWidget(m_globePauseToggle);
+            globeLayout->addWidget(row);
+        }
+
+        //  Section: Main Page Dropdowns
+        addSectionHeader(appearanceContent, appearanceContentLayout, tr("Main Page Dropdowns"));
+        auto [dropdownCard, dropdownLayout] = addSectionCard(appearanceContent, appearanceContentLayout);
 
         //  Show Selected Location Picker
         {
-            QWidget* row = new QWidget(appearanceCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Show Selected Location"),
-                                      tr("Display the Selected Location dropdown on the main VPN page.")), 1);
+            auto [row, rl] = makeSettingRow(dropdownCard,
+                                            tr("Show Selected Location"),
+                                            tr("Display the Selected Location dropdown on the main VPN page."));
             ToggleWithStatus* toggle = new ToggleWithStatus(row);
             toggle->setOn(AppConfig::instance().showLocationPicker(), false);
             connect(toggle, &ToggleWithStatus::toggled, this, [this](const bool on)
@@ -1003,19 +967,15 @@ void SettingsPage::buildAppearanceTab(QTabWidget* tabs)
                 emit locationPickerVisibilityChanged(on);
             });
             rl->addWidget(toggle);
-            addAppearance(row);
+            dropdownLayout->addWidget(row);
         }
 
         //  Show Favorites Dropdown
         {
-            QWidget* row = new QWidget(appearanceCard);
-            QHBoxLayout* rl = new QHBoxLayout(row);
-            rl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                   SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-            rl->setSpacing(SETTING_ROW_SPACING);
-            rl->addWidget(makeTextCol(row,
-                                      tr("Show Favorites Dropdown"),
-                                      tr("Display the Favorites dropdown on the main VPN page.")), 1);
+            addDivider(dropdownLayout, dropdownCard);
+            auto [row, rl] = makeSettingRow(dropdownCard,
+                                            tr("Show Favorites Dropdown"),
+                                            tr("Display the Favorites dropdown on the main VPN page."));
             ToggleWithStatus* toggle = new ToggleWithStatus(row);
             toggle->setOn(AppConfig::instance().showFavoritesDropdown(), false);
             connect(toggle, &ToggleWithStatus::toggled, this, [this](const bool on)
@@ -1036,11 +996,60 @@ void SettingsPage::buildAppearanceTab(QTabWidget* tabs)
                 toggle->setToolTip(tip);
             }
 
-            addAppearance(row);
+            dropdownLayout->addWidget(row);
         }
 
-        appearanceCardLayout->addStretch();
+        appearanceContentLayout->addStretch();
     }
+}
+
+void SettingsPage::updateGlobePauseToggle() const
+{
+    // Nothing to pause with the globe off.
+    m_globePauseToggle->setEnabled(AppConfig::instance().globeAnimation() != AppConfig::GlobeAnimation::Off);
+}
+
+// static
+QString SettingsPage::globeDescription()
+{
+    if (MotionPreference::instance().support() == MotionPreference::Support::Available)
+    {
+        return tr("Show a slowly spinning globe behind the connect button that turns to face the "
+                  "country you connect to. Auto follows your desktop's reduce-motion setting. "
+                  "Off removes it.");
+    }
+    return tr("Show a slowly spinning globe behind the connect button that turns to face the "
+              "country you connect to. Off removes it.");
+}
+
+void SettingsPage::populateGlobeCombo()
+{
+    if (m_globeDescLabel != nullptr)
+    {
+        m_globeDescLabel->setText(globeDescription());
+    }
+
+    // Rebuilding is not a user choice; nothing should be saved for it.
+    const QSignalBlocker blocker(m_globeCombo);
+    m_globeCombo->clear();
+
+    const bool autoAvailable = MotionPreference::instance().support() == MotionPreference::Support::Available;
+    if (autoAvailable == true)
+    {
+        m_globeCombo->addItem(tr("Auto"), AppConfig::globeAnimationName(AppConfig::GlobeAnimation::Auto));
+        m_globeCombo->setItemData(0, tr("Follows your desktop's reduce-motion setting."), Qt::ToolTipRole);
+    }
+    m_globeCombo->addItem(tr("On"),  AppConfig::globeAnimationName(AppConfig::GlobeAnimation::On));
+    m_globeCombo->addItem(tr("Off"), AppConfig::globeAnimationName(AppConfig::GlobeAnimation::Off));
+
+    // A saved "auto" shows as On when the desktop's preference cannot be
+    // read, since that is what it does then.
+    AppConfig::GlobeAnimation shown = AppConfig::instance().globeAnimation();
+    if (shown == AppConfig::GlobeAnimation::Auto && autoAvailable == false)
+    {
+        shown = AppConfig::GlobeAnimation::On;
+    }
+    m_globeCombo->setCurrentIndex(m_globeCombo->findData(AppConfig::globeAnimationName(shown)));
 }
 
 // VPN tab: everything applied through `protonvpn config set`.
@@ -1119,14 +1128,9 @@ void SettingsPage::buildVpnTab(QTabWidget* tabs)
         ksVLayout->setContentsMargins(0, 0, 0, 0);
         ksVLayout->setSpacing(0);
 
-        QWidget* ksRow = new QWidget(ksContainer);
-        QHBoxLayout* ksRowLayout = new QHBoxLayout(ksRow);
-        ksRowLayout->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
-                                        SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN);
-        ksRowLayout->setSpacing(SETTING_ROW_SPACING);
-        ksRowLayout->addWidget(makeTextCol(ksRow,
-            tr("Kill Switch"),
-            tr("Block internet access if the VPN connection drops unexpectedly.")), 1);
+        auto [ksRow, ksRowLayout] = makeSettingRow(ksContainer,
+                                                   tr("Kill Switch"),
+                                                   tr("Block internet access if the VPN connection drops unexpectedly."));
         m_killSwitchToggle = new ToggleWithStatus(ksRow);
         ksRowLayout->addWidget(m_killSwitchToggle, 0);
         ksVLayout->addWidget(ksRow);
@@ -1516,20 +1520,19 @@ void SettingsPage::buildVpnTab(QTabWidget* tabs)
     {
         addDivider(plusLayout, m_plusSection);
 
-        QWidget* dnsRow = new QWidget(m_plusSection);
-        QHBoxLayout* dnsRl = new QHBoxLayout(dnsRow);
+        auto [dnsRow, dnsRl] = makeSettingRow(m_plusSection,
+                                              tr("Custom DNS"),
+                                              tr("Override the VPN DNS with your own resolver(s). "
+                                                 "Separate multiple addresses with a comma."));
+        // Tighter at the bottom: the server field sits right below.
         dnsRl->setContentsMargins(SETTING_ROW_H_MARGIN, SETTING_ROW_V_MARGIN,
                                   SETTING_ROW_H_MARGIN, DNS_ADDR_BOT_MARGIN / 3);
-        dnsRl->setSpacing(SETTING_ROW_SPACING);
-        dnsRl->addWidget(makeTextCol(dnsRow,
-                                     tr("Custom DNS"),
-                                     tr("Override the VPN DNS with your own resolver(s). "
-                                        "Separate multiple addresses with a comma.")), 1);
         m_dnsToggle = new ToggleWithStatus(dnsRow);
         dnsRl->addWidget(m_dnsToggle);
         plusLayout->addWidget(dnsRow);
 
         QWidget* dnsAddrRow = new QWidget(m_plusSection);
+        m_dnsAddrRow = dnsAddrRow;
         dnsAddrRow->setVisible(false);
         QHBoxLayout* dnsAddrRl = new QHBoxLayout(dnsAddrRow);
         dnsAddrRl->setContentsMargins(SETTING_ROW_H_MARGIN, 0, SETTING_ROW_H_MARGIN, DNS_ADDR_BOT_MARGIN);
@@ -1572,7 +1575,7 @@ void SettingsPage::buildVpnTab(QTabWidget* tabs)
 
         connect(m_dnsApplyBtn, &QPushButton::clicked, this, [this]()
         {
-            const QString dns = m_dnsEdit->text().trimmed();
+            const QString dns = CliSettings::normalizeDnsList(m_dnsEdit->text());
             if (dns.isEmpty()) return;
 
             const QString cliValue = QStringLiteral("--dns %1 on").arg(dns);
@@ -1925,7 +1928,12 @@ void SettingsPage::onSettingsReady(const QMap<QString, QString>& info)
         && dns.toLower() != QLatin1String("off")
         && dns.toLower() != QLatin1String("none");
     m_dnsToggle->setOn(dnsOn, false);
-    if (dnsOn == true)
+    // setOn() does not emit toggled(), so the server field has to follow by
+    // hand; otherwise a saved custom DNS shows as on with no way to see or
+    // edit its servers.
+    m_dnsAddrRow->setVisible(dnsOn);
+    // "on" alone means enabled with no servers to show.
+    if (dnsOn == true && dns.toLower() != QLatin1String("on"))
     {
         m_dnsEdit->setText(dns);
     }

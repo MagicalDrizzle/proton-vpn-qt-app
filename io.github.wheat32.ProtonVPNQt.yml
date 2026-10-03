@@ -16,9 +16,9 @@ finish-args:
   - --socket=system-bus
   # Allow flatpak-spawn to call the host protonvpn CLI
   - --talk-name=org.freedesktop.Flatpak
-  # Read-only access to the ProtonVPN settings file written by the host CLI.
-  # Without this, fetchSettings() cannot read ~/.config/Proton/VPN/settings.json
-  # and all VPN settings toggles will appear as OFF.
+  # Read-only access to the settings file the host CLI writes. The VPN settings
+  # come from `protonvpn config list`, which shows at most two custom DNS
+  # servers; this file supplies the rest.
   - --filesystem=~/.config/Proton:ro
   # Allow writing the XDG autostart .desktop file for the "Launch on Startup" feature.
   - --filesystem=~/.config/autostart

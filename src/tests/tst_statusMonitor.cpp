@@ -1,9 +1,11 @@
 #include <QtTest/QtTest>
 #include "cli/statusMonitor.h"
 
-// Tests cover the two public static parsing helpers:
+// Tests cover the public static parsing helpers:
 //   StatusMonitor::parseStatusFields()
 //   StatusMonitor::parseCityFromServer()
+//   StatusMonitor::parseServerName()
+//   StatusMonitor::parseCountryFromServer()
 // These are pure-function text parsers that drive all VPN state decisions in
 // the app, making them critical to correctness.
 
@@ -210,6 +212,51 @@ private slots:
         const QString city =
             StatusMonitor::parseCityFromServer(QStringLiteral("JP#1 in Tokyo"));
         QCOMPARE(city, QStringLiteral("Tokyo"));
+    }
+
+    //  parseServerName
+
+    void parseServerName_fullServerString_returnsName()
+    {
+        // The name is what `protonvpn connect <name>` takes to reconnect.
+        QCOMPARE(StatusMonitor::parseServerName(
+                     QStringLiteral("US-NJ#203 in Secaucus, United States")),
+                 QStringLiteral("US-NJ#203"));
+    }
+
+    void parseServerName_nameOnly_returnsName()
+    {
+        QCOMPARE(StatusMonitor::parseServerName(QStringLiteral("DE#42")), QStringLiteral("DE#42"));
+        QVERIFY(StatusMonitor::parseServerName(QString()).isEmpty());
+    }
+
+    //  parseCountryFromServer
+
+    void parseCountryFromServer_regionServer_returnsCountry()
+    {
+        QCOMPARE(StatusMonitor::parseCountryFromServer(
+                     QStringLiteral("US-NJ#203 in Secaucus, United States")),
+                 QStringLiteral("US"));
+    }
+
+    void parseCountryFromServer_plainServer_returnsCountry()
+    {
+        QCOMPARE(StatusMonitor::parseCountryFromServer(QStringLiteral("de#42 in Berlin, Germany")),
+                 QStringLiteral("DE"));
+    }
+
+    void parseCountryFromServer_dashInLocation_isIgnored()
+    {
+        // Only the name counts; a dash in the location must not be read as one.
+        QCOMPARE(StatusMonitor::parseCountryFromServer(
+                     QStringLiteral("FR#5 in Saint-Denis, France")),
+                 QStringLiteral("FR"));
+    }
+
+    void parseCountryFromServer_noPrefix_returnsEmpty()
+    {
+        QVERIFY(StatusMonitor::parseCountryFromServer(QStringLiteral("server in Nowhere")).isEmpty());
+        QVERIFY(StatusMonitor::parseCountryFromServer(QString()).isEmpty());
     }
 };
 

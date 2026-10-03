@@ -189,16 +189,22 @@ static void addWideInfoRow(QListWidget* list, const QString& text)
 // ============================================================
 // Bubble style helper
 // ============================================================
+// The min-height keeps the pill shape whatever the font: Qt drops a border
+// radius entirely, leaving square corners, once the two radii add up to more
+// than the button's height. With a font whose 12px line height is short
+// (DejaVu Sans, the Flatpak runtime's default), the button would otherwise be
+// 22px tall, under the 24px that two 12px radii need. 16px of content plus
+// 6px of padding and 2px of border is exactly 24px.
 QString CountriesPage::bubbleStyle(const bool active)
 {
     if (active)
         return QStringLiteral(
             "QPushButton { background: #6d4aff; color: white; border: 1px solid #6d4aff; "
-            "border-radius: 12px; padding: 3px 12px; font-size: 12px; }"
+            "border-radius: 12px; padding: 3px 12px; min-height: 16px; font-size: 12px; }"
             "QPushButton:hover { background: #7d5aff; }");
     return QStringLiteral(
         "QPushButton { background: transparent; color: #aaaacc; border: 1px solid #444466; "
-        "border-radius: 12px; padding: 3px 12px; font-size: 12px; }"
+        "border-radius: 12px; padding: 3px 12px; min-height: 16px; font-size: 12px; }"
         "QPushButton:hover { border-color: #6d4aff; color: #ccccee; }");
 }
 
@@ -314,8 +320,7 @@ CountriesPage::CountriesPage(VpnManager* manager, QWidget* parent)
     });
 
     //  Sync P2P filter with port forwarding setting
-    connect(m_manager, &VpnManager::settingsReady,
-            this, [this](const QMap<QString, QString>& settings)
+    auto syncP2PFilter = [this](const QMap<QString, QString>& settings)
     {
         const QString v = settings.value(QStringLiteral("port-forwarding")).toLower().trimmed();
         const bool pfOn = isOnString(v);
@@ -335,18 +340,12 @@ CountriesPage::CountriesPage(VpnManager* manager, QWidget* parent)
             updateBubbleStyles();
             applyFilter();
         }
-    });
-
-    // Re-read settings after any CLI config change so the P2P filter stays in
-    // sync when the user toggles port forwarding from the Settings page.
-    connect(m_manager, &VpnManager::configApplied,
-            this, [this](const QString&)
-    {
-        m_manager->fetchSettings();
-    });
-
+    };
+    // The manager re-reads the settings at sign-in and after every change, so
+    // this also follows port forwarding being toggled from the Settings page.
+    connect(m_manager, &VpnManager::settingsReady, this, syncP2PFilter);
     // Seed the initial port-forwarding state.
-    m_manager->fetchSettings();
+    syncP2PFilter(m_manager->settings());
 
     //  Free-user lock state
     m_isFreeUser = (m_manager->accountType() == AccountType::Free);
