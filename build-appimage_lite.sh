@@ -217,15 +217,29 @@ for _wayland_dir in \
         info "Bundled Wayland platform plugin (${_wayland_dir})"
 
         # Libraries that must come from the host system at runtime are skipped,
-        # matching linuxdeploy's own excludelist:
-        #   - Core glibc (libc, ld-linux, libpthread, etc.): bundling libc.so.6
-        #     ties the AppImage to the CI runner's glibc build (e.g. its compiled
-        #     CPU baseline), breaking it on hosts with an older/different CPU.
-        #   - fontconfig and freetype: a bundled fontconfig older than the host
-        #     cannot parse the host's /etc/fonts config, so it prints a wall of
-        #     warnings and drops the generic families (sans-serif, monospace,
-        #     emoji), which changes font fallback.
-        _host_excludelist='^(ld-linux(-x86-64)?\.so\.2|ld-linux-aarch64\.so\.1|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*|libfontconfig\.so\.1|libfreetype\.so\.6)$'
+        # matching linuxdeploy's own excludelist (AppImage's excludelist).
+        _host_libs=(
+            # Core glibc: bundling libc.so.6 ties the AppImage to the CI
+            # runner's glibc build (e.g. its compiled CPU baseline), breaking
+            # it on hosts with an older/different CPU.
+            'ld-linux(-x86-64)?\.so\.2' 'ld-linux-aarch64\.so\.1' 'libc\.so\.6'
+            'libm\.so\.6' 'libpthread\.so\.0' 'libdl\.so\.2' 'librt\.so\.1'
+            'libresolv\.so\.2' 'libnsl\.so\.1' 'libutil\.so\.1' 'libcrypt\.so\.1'
+            'libnss_.*\.so.*'
+            # Graphics and display: these have to match the host's GPU driver
+            # and display server. Bundled copies are known to break Mesa and
+            # proprietary drivers with "undefined symbol" errors.
+            'libGL\.so\.1' 'libEGL\.so\.1' 'libGLX\.so\.0' 'libGLdispatch\.so\.0'
+            'libX11\.so\.6' 'libxcb\.so\.1' 'libwayland-client\.so\.0'
+            # Fonts: a bundled fontconfig older than the host cannot parse the
+            # host's /etc/fonts config, so it prints a wall of warnings and
+            # drops the generic families (sans-serif, monospace, emoji), which
+            # changes font fallback. expat and zlib are their dependencies and
+            # come from the host too, so the host's fontconfig and freetype
+            # never run against older bundled copies.
+            'libfontconfig\.so\.1' 'libfreetype\.so\.6' 'libexpat\.so\.1' 'libz\.so\.1'
+        )
+        _host_excludelist="^($(IFS='|'; echo "${_host_libs[*]}"))$"
         while IFS= read -r _dep; do
             _dep_name=$(basename "${_dep}")
             if [[ "${_dep_name}" =~ ${_host_excludelist} ]]; then

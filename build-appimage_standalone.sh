@@ -213,15 +213,26 @@ fi
 # -- Bundle PyGObject (gi) from system Python ----------------------------------
 # The ProtonVPN CLI imports 'gi' at startup for its NetworkManager backend.
 # gi cannot be pip-installed portably; we copy it from the system's Python 3
-# package (python3-gi).  It must be in AppDir NOW so that linuxdeploy picks up
-# its native dependency: libgirepository-1.0.so.0.
+# package.  It must be in AppDir NOW so that linuxdeploy picks up its native
+# dependency: libgirepository.
+# The system Python is asked where each package lives because distros install
+# them in different places: /usr/lib/python3/dist-packages on Debian/Ubuntu,
+# /usr/lib/python3.X/site-packages on Arch and Fedora.
+# gi is required: without it every CLI command fails with "No module named
+# 'gi'", so a build that cannot find it must stop here.  cairo is optional;
+# nothing in the ProtonVPN packages imports it.
+system_py_package_dir() {
+    python3 -c "import importlib.util, os; s = importlib.util.find_spec('$1'); print(os.path.dirname(s.origin) if s and s.origin else '')"
+}
 for gi_pkg in gi cairo; do
-    src="/usr/lib/python3/dist-packages/${gi_pkg}"
-    if [[ -d "${src}" ]]; then
-        info "Copying system Python package: ${gi_pkg}"
+    src=$(system_py_package_dir "${gi_pkg}")
+    if [[ -n "${src}" && -d "${src}" ]]; then
+        info "Copying system Python package: ${gi_pkg} (${src})"
         cp -r "${src}" "${CLI_DIR}/dist-packages/"
+    elif [[ "${gi_pkg}" == "gi" ]]; then
+        die "System Python package not found: gi (install python3-gi on Debian/Ubuntu, python-gobject on Arch)"
     else
-        warn "System Python package not found: ${src} (install python3-gi / python3-gi-cairo)"
+        warn "System Python package not found: ${gi_pkg} (install python3-gi-cairo on Debian/Ubuntu, python-cairo on Arch)"
     fi
 done
 
@@ -326,15 +337,29 @@ for _wayland_dir in \
 
         # Copy shared library dependencies of libqwayland.so not already bundled.
         # Libraries that must come from the host system at runtime are skipped,
-        # matching linuxdeploy's own excludelist:
-        #   - Core glibc (libc, ld-linux, libpthread, etc.): bundling libc.so.6
-        #     ties the AppImage to the CI runner's glibc build (e.g. its compiled
-        #     CPU baseline), breaking it on hosts with an older/different CPU.
-        #   - fontconfig and freetype: a bundled fontconfig older than the host
-        #     cannot parse the host's /etc/fonts config, so it prints a wall of
-        #     warnings and drops the generic families (sans-serif, monospace,
-        #     emoji), which changes font fallback.
-        _host_excludelist='^(ld-linux(-x86-64)?\.so\.2|ld-linux-aarch64\.so\.1|libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|libnsl\.so\.1|libutil\.so\.1|libcrypt\.so\.1|libnss_.*\.so.*|libfontconfig\.so\.1|libfreetype\.so\.6)$'
+        # matching linuxdeploy's own excludelist (AppImage's excludelist).
+        _host_libs=(
+            # Core glibc: bundling libc.so.6 ties the AppImage to the CI
+            # runner's glibc build (e.g. its compiled CPU baseline), breaking
+            # it on hosts with an older/different CPU.
+            'ld-linux(-x86-64)?\.so\.2' 'ld-linux-aarch64\.so\.1' 'libc\.so\.6'
+            'libm\.so\.6' 'libpthread\.so\.0' 'libdl\.so\.2' 'librt\.so\.1'
+            'libresolv\.so\.2' 'libnsl\.so\.1' 'libutil\.so\.1' 'libcrypt\.so\.1'
+            'libnss_.*\.so.*'
+            # Graphics and display: these have to match the host's GPU driver
+            # and display server. Bundled copies are known to break Mesa and
+            # proprietary drivers with "undefined symbol" errors.
+            'libGL\.so\.1' 'libEGL\.so\.1' 'libGLX\.so\.0' 'libGLdispatch\.so\.0'
+            'libX11\.so\.6' 'libxcb\.so\.1' 'libwayland-client\.so\.0'
+            # Fonts: a bundled fontconfig older than the host cannot parse the
+            # host's /etc/fonts config, so it prints a wall of warnings and
+            # drops the generic families (sans-serif, monospace, emoji), which
+            # changes font fallback. expat and zlib are their dependencies and
+            # come from the host too, so the host's fontconfig and freetype
+            # never run against older bundled copies.
+            'libfontconfig\.so\.1' 'libfreetype\.so\.6' 'libexpat\.so\.1' 'libz\.so\.1'
+        )
+        _host_excludelist="^($(IFS='|'; echo "${_host_libs[*]}"))$"
         while IFS= read -r _dep; do
             _dep_name=$(basename "${_dep}")
             if [[ "${_dep_name}" =~ ${_host_excludelist} ]]; then
