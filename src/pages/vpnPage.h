@@ -14,6 +14,8 @@
 #include "../widgets/pickerDrawer.h"
 #include "../widgets/infoBanner.h"
 #include "../widgets/flatpakBetaBanner.h"
+#include "../widgets/svgBanner.h"
+#include <QGridLayout>
 #include "../dialogs/errorDetailsDialog.h"
 
 // ---------------------------------------------------------------------------
@@ -28,6 +30,9 @@ public:
     explicit PowerButton(QWidget* parent = nullptr);
     enum class RingState { Unknown, Connected, Disconnected, Spinning };
     void setState(RingState s);
+    // Resizes the button to `scale` times its design size; the ring, glow and
+    // icon all scale with it.
+    void setScale(qreal scale);
     [[nodiscard]] qreal spinAngle() const { return m_spinAngle; }
     void setSpinAngle(qreal a) { m_spinAngle = a; update(); }
 
@@ -46,6 +51,7 @@ protected:
 
 private:
     RingState m_state = RingState::Unknown;
+    qreal m_scale = 1.0;
     qreal m_spinAngle = 0.0;
     bool m_hovered = false;
     bool m_pressed = false;
@@ -176,6 +182,7 @@ signals:
 protected:
     void changeEvent(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* ev) override;
 
 private slots:
     void onCitiesReady(const QString& countryCode, const QList<QPair<QString, QString>>& cities);
@@ -202,10 +209,13 @@ private:
 
     // Wide-mode layout widgets
     QWidget*          m_logoRow              = nullptr;
+    QHBoxLayout*      m_logoRowLayout        = nullptr;
+    SvgBanner*        m_logo                 = nullptr;
+    QVBoxLayout*      m_topLayout            = nullptr;
     QWidget*          m_topContentWidget     = nullptr;
     QScrollArea*      m_scrollArea           = nullptr;
     // Narrow-mode scroll offset wrapper - carries the kCollapsedW left margin so
-    // only the scroll area is pushed right (logo/power remain full-width centred).
+    // only the scroll area is pushed right (logo/power remain full-width centered).
     QWidget*          m_scrollOffsetWidget   = nullptr;
     QVBoxLayout*      m_scrollOffsetLayout   = nullptr;
     QWidget*          m_narrowContent        = nullptr;
@@ -215,6 +225,11 @@ private:
     QVBoxLayout*      m_pickerSidebarLayout  = nullptr;
     QWidget*          m_rightContent         = nullptr;
     QVBoxLayout*      m_rightContentLayout   = nullptr;
+    // Wide mode places the sidebar and the content in a grid, in one of two
+    // arrangements (see updateWideArrangement()).
+    QGridLayout*      m_wideGrid             = nullptr;
+    bool              m_wideCentered         = false;
+    bool              m_arrangementPending   = false;
     bool              m_wideMode             = false;
 
     static constexpr int kWideThreshold = 700;
@@ -277,6 +292,15 @@ private:
     void checkPrereleaseBanner();
     void checkFlatpakBetaBanner();
     void updateBannerAreaVisibility();
+    // Scales the logo, power button, status text and their spacing with the
+    // page size; 1 at the default window size (see vpnPage.cpp).
+    void updateContentScale();
+    qreal m_contentScale = 1.0;
+    // Wide mode only: chooses between the content spanning the full width
+    // above the dropdowns and sitting in a column beside them.
+    void updateWideArrangement();
+    // Runs updateWideArrangement() once the pending layout pass is done.
+    void scheduleWideArrangement();
     void applyFreeUserMode() const;
     void startNatPmpLoop();
     void stopNatPmpLoop();

@@ -38,6 +38,8 @@ public:
     QString lastSeenVersion() const;
     bool checkForUpdates() const;
     bool logToFile() const;
+    // Share of the width (0-1) the Countries list takes in the split view.
+    double splitViewCountriesRatio() const;
 
     void setAutoConnect(bool value);
     void setAutoConnectServer(const QString& value);
@@ -52,6 +54,12 @@ public:
     void setLastSeenVersion(const QString& value);
     void setCheckForUpdates(bool value);
     void setLogToFile(bool value);
+    // Clamped to [SPLIT_RATIO_MIN, SPLIT_RATIO_MAX].
+    void setSplitViewCountriesRatio(double value);
+
+    static constexpr double SPLIT_RATIO_DEFAULT = 0.4;
+    static constexpr double SPLIT_RATIO_MIN     = 0.2;
+    static constexpr double SPLIT_RATIO_MAX     = 0.7;
 
     // Resets every setting to its compile-time default and deletes the config
     // file. The in-memory state is usable immediately; the file will not be
@@ -72,6 +80,7 @@ private:
     int  m_recentConnectionsCount = 5;
     bool m_startHidden = false;
     bool m_closeToTray = true;
+    double m_splitViewCountriesRatio = SPLIT_RATIO_DEFAULT;
     Theme m_theme = Theme::System;
     bool m_showLocationPicker = true;
     bool m_showFavoritesDropdown = true;

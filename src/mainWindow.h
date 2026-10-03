@@ -5,11 +5,13 @@
 #include <QFrame>
 #include <QKeyEvent>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QStackedWidget>
 #include <QToolButton>
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include "vpnManager.h"
+#include "widgets/gripSplitter.h"
 
 class QNetworkAccessManager;
 
@@ -74,6 +76,17 @@ private:
 #ifdef QT_DEBUG
     DebugPage* m_debugPage;
 #endif
+
+    // Split view: in a wide enough window the Countries page is shown beside
+    // the VPN page instead of on its own page (see applySplitView()). Each
+    // lives in a host widget so the stack indices never shift when it moves.
+    GripSplitter* m_homeSplitter = nullptr; // stack slot for Page::Vpn
+    QWidget*   m_countriesHost  = nullptr; // stack slot for Page::Countries
+    QTimer*    m_splitSaveTimer = nullptr; // saves the divider position after a drag
+    bool       m_splitView      = false;
+    void applySplitView(bool split);
+    // Places the split view divider at the saved Countries share of the width.
+    void applySplitRatio();
 
     void showPage(Page page);
     // Startup failure pages, also reachable from the Debug page for testing.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QEvent>
+#include <QLayout>
 #include <QGuiApplication>
 #include <QPainter>
 #include <QSvgRenderer>
@@ -23,6 +24,12 @@ public:
         setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         QWidget::setMaximumWidth(DEFAULT_MAX_WIDTH);
         m_maxWidth = DEFAULT_MAX_WIDTH;
+        // sizeHint() depends on the parent's width, so the layout has to ask
+        // again whenever the parent is resized; nothing else would tell it.
+        if (parent != nullptr)
+        {
+            parent->installEventFilter(this);
+        }
     }
 
     void setMaxWidth(const int maxWidth) // In pixels
@@ -42,8 +49,7 @@ public:
 
     [[nodiscard]] QSize sizeHint() const override
     {
-        const int parentW = (parentWidget() != nullptr) ? parentWidget()->width() : m_maxWidth;
-        const int w = qMin(parentW, m_maxWidth);
+        const int w = qMin(availableWidth(), m_maxWidth);
         return {w, qRound(w / m_aspect)};
     }
 
@@ -55,6 +61,34 @@ public:
     [[nodiscard]] bool hasHeightForWidth() const override { return true; }
 
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (watched == parentWidget() && event->type() == QEvent::Resize)
+        {
+            updateGeometry();
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+    // Width the parent can give the banner: its width less its layout's side
+    // margins, so a narrow parent shrinks the banner instead of letting it run
+    // into those margins.
+    [[nodiscard]] int availableWidth() const
+    {
+        const QWidget* parent = parentWidget();
+        if (parent == nullptr)
+        {
+            return m_maxWidth;
+        }
+        int w = parent->width();
+        if (parent->layout() != nullptr)
+        {
+            const QMargins margins = parent->layout()->contentsMargins();
+            w -= margins.left() + margins.right();
+        }
+        return w;
+    }
+
     void paintEvent(QPaintEvent*) override
     {
         QPainter p(this);

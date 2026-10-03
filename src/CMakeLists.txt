@@ -64,6 +64,7 @@ set(SOURCES
         widgets/infoBanner.h
         widgets/flatpakBetaBanner.h
         widgets/numberSpinner.h
+        widgets/gripSplitter.h
         widgets/pickerBase.h
         widgets/pickerDrawer.h
         widgets/pickerDrawer.cpp

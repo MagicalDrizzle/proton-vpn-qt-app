@@ -24,6 +24,7 @@
 #include <QCursor>
 #include <QScrollArea>
 #include <QVersionNumber>
+#include <algorithm>
 #include <cmath>
 
 // ============================================================
@@ -49,11 +50,6 @@ constexpr QColor RING_CONNECTED_COLOR(0x1a, 0x9c, 0x5b);
 constexpr QColor RING_DISCONNECTED_COLOR(0xd6, 0x3f, 0x3f);
 constexpr QColor RING_UNKNOWN_COLOR(0x55, 0x55, 0x77);
 constexpr QColor HOVER_GLOW(0xff, 0xff, 0xff, 18);
-constexpr QRectF POWER_ICON_RECT(
-    (BTN_SIZE - ICON_SIZE) / 2.0,
-    (BTN_SIZE - ICON_SIZE) / 2.0,
-    ICON_SIZE,
-    ICON_SIZE);
 
 // Picker header
 // Margins/spacing and the leading-icon box live in PickerBase, which owns the
@@ -82,6 +78,20 @@ constexpr int   FEATURE_ICON_PIX   = 16;
 constexpr int   FEATURE_ICON_SIZE  = 22;
 
 // VpnPage layout
+// Content scaling (see VpnPage::updateContentScale()): the page size at the
+// default window size, where the scale is 1, and the most it scales up to.
+constexpr int   REFERENCE_PAGE_WIDTH       = 595;
+constexpr int   REFERENCE_PAGE_HEIGHT      = 600;
+constexpr qreal MAX_CONTENT_SCALE          = 2.0;
+// The scale is rounded to this step, so a window drag only restyles the page
+// when the scale has visibly changed rather than on every pixel.
+constexpr qreal CONTENT_SCALE_STEP         = 0.05;
+constexpr int   LOGO_MAX_WIDTH             = 500;
+// Minimum space left between the content and the dropdowns below it before
+// wide mode stops centering the content on the full page width.
+constexpr int   CENTERED_CONTENT_GAP       = 16;
+// Label property holding the font style.qss gives the label (see scaleLabelFont()).
+constexpr const char* BASE_FONT_PROPERTY   = "baseFont";
 constexpr int   PAGE_H_MARGIN              = 40;
 constexpr int   LOGO_TOP_MARGIN            = 40;
 constexpr int   TOP_SECTION_SPACING        = 24;
@@ -171,6 +181,32 @@ QWidget* makeConnectionRow(const QString& countryCode, const QString& countryNam
 
     return row;
 }
+// Records the font style.qss gives `label`, as the base scaleLabelFont() scales.
+// Called once at construction: the info label later swaps its object name to
+// errorLabel, whose rule sets no font size, so reading it later could pick up
+// the wrong base.
+void rememberBaseFont(QLabel* label)
+{
+    label->ensurePolished();
+    label->setProperty(BASE_FONT_PROPERTY, label->font());
+}
+
+// Scales a label's font to `scale` times its base size. A local font-size rule
+// is the only thing that overrides style.qss, so that is what is set; at scale
+// 1 it is cleared and the label is exactly as style.qss draws it.
+void scaleLabelFont(QLabel* label, const qreal scale)
+{
+    if (qFuzzyCompare(scale, 1.0))
+    {
+        label->setStyleSheet(QString());
+        return;
+    }
+    const QFont base = label->property(BASE_FONT_PROPERTY).value<QFont>();
+    const QString size = base.pixelSize() > 0
+        ? QString::number(qRound(base.pixelSize() * scale)) + QStringLiteral("px")
+        : QString::number(base.pointSizeF() * scale, 'f', 1) + QStringLiteral("pt");
+    label->setStyleSheet(QStringLiteral("font-size: ") + size + QLatin1Char(';'));
+}
 } // namespace
 
 PowerButton::PowerButton(QWidget* parent) : QWidget(parent)
@@ -191,6 +227,16 @@ PowerButton::PowerButton(QWidget* parent) : QWidget(parent)
     m_anim->setEndValue(360.0);
     m_anim->setDuration(SPIN_ANIM_DURATION_MS);
     m_anim->setLoopCount(-1); // infinite
+}
+
+void PowerButton::setScale(const qreal scale)
+{
+    if (qFuzzyCompare(m_scale, scale)) return;
+    m_scale = scale;
+    const int size = qRound(BTN_SIZE * scale);
+    setFixedSize(size, size);
+    setMask(QRegion(0, 0, size, size, QRegion::Ellipse));
+    update();
 }
 
 void PowerButton::setState(const RingState s)
@@ -227,7 +273,10 @@ void PowerButton::paintEvent(QPaintEvent*)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
-    const QRectF widgetRect = rect();
+    // The geometry below is in BTN_SIZE design units; scaling the painter keeps
+    // the ring, glow and focus ring (pen widths included) in proportion.
+    p.scale(m_scale, m_scale);
+    const QRectF widgetRect(0, 0, BTN_SIZE, BTN_SIZE);
     const QRectF ringRect = widgetRect.adjusted(RING_MARGIN, RING_MARGIN, -RING_MARGIN, -RING_MARGIN);
 
     //  ring / arc
@@ -285,14 +334,18 @@ void PowerButton::paintEvent(QPaintEvent*)
     }
 
     //  power SVG
+    // Rendered at the scaled size and drawn without the painter's scale: a
+    // pixmap stretched by the painter would come out blurry.
+    p.resetTransform();
+    const int iconSize = qRound(ICON_SIZE * m_scale);
     const bool darkMode = palette().color(QPalette::Window).lightness() < LIGHTNESS_MIDPOINT;
     const QPixmap iconPix = darkMode
-        ? GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), ICON_SIZE, QColor(Qt::white))
-        : GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), ICON_SIZE);
+        ? GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), iconSize, QColor(Qt::white))
+        : GeoUtils::svgPixmap(QStringLiteral(":/assets/power.svg"), iconSize);
     // Point overload, not the rect one: the pixmap is already exactly
-    // ICON_SIZE in device-independent pixels, so this blits it without any
+    // iconSize in device-independent pixels, so this blits it without any
     // rescaling on HiDPI screens.
-    p.drawPixmap(POWER_ICON_RECT.topLeft(), iconPix);
+    p.drawPixmap(QPointF((width() - iconSize) / 2.0, (height() - iconSize) / 2.0), iconPix);
 }
 
 void PowerButton::mousePressEvent(QMouseEvent* e)
@@ -825,27 +878,29 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_outerLayout = outerLayout;
     outerLayout->setSpacing(0);
     // No left margin here - logo and power button span the full page width so they
-    // are visually centred.  The COLLAPSED_DRAWER_WIDTH offset is applied only to the scroll
+    // are visually centered.  The COLLAPSED_DRAWER_WIDTH offset is applied only to the scroll
     // area via m_scrollOffsetWidget, keeping content clear of the drawer overlay.
     outerLayout->setContentsMargins(0, 0, 0, 0);
 
     //  Logo row - always at the top, full width
     m_logoRow = new QWidget(this);
     m_logoRow->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    QHBoxLayout* logoRowLayout = new QHBoxLayout(m_logoRow);
-    logoRowLayout->setContentsMargins(PAGE_H_MARGIN, LOGO_TOP_MARGIN, PAGE_H_MARGIN, 0);
+    m_logoRowLayout = new QHBoxLayout(m_logoRow);
+    m_logoRowLayout->setContentsMargins(PAGE_H_MARGIN, LOGO_TOP_MARGIN, PAGE_H_MARGIN, 0);
 
     // Proton VPN logo banner
-    SvgBanner* logoWidget = new SvgBanner(QStringLiteral(":/assets/proton-vpn-logo.svg"), LOGO_SCALE, m_logoRow);
-    logoWidget->setLightResource(QStringLiteral(":/assets/proton-vpn-logo-light.svg"));
-    logoRowLayout->addWidget(logoWidget, 0, Qt::AlignCenter);
+    m_logo = new SvgBanner(QStringLiteral(":/assets/proton-vpn-logo.svg"), LOGO_SCALE, m_logoRow);
+    m_logo->setLightResource(QStringLiteral(":/assets/proton-vpn-logo-light.svg"));
+    m_logo->setMaxWidth(LOGO_MAX_WIDTH);
+    m_logoRowLayout->addWidget(m_logo, 0, Qt::AlignCenter);
 
     outerLayout->addWidget(m_logoRow);
 
     //  Fixed top section: power button + status label
     m_topContentWidget = new QWidget(this);
     m_topContentWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    QVBoxLayout* topLayout = new QVBoxLayout(m_topContentWidget);
+    m_topLayout = new QVBoxLayout(m_topContentWidget);
+    QVBoxLayout* topLayout = m_topLayout;
     topLayout->setSpacing(TOP_SECTION_SPACING);
     topLayout->setContentsMargins(PAGE_H_MARGIN, TOP_SECTION_TOP_MARGIN, PAGE_H_MARGIN, TOP_SECTION_BTM_MARGIN);
 
@@ -877,6 +932,7 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_statusLabel = new QLabel(tr("Checking\u2026"), m_topContentWidget);
     m_statusLabel->setObjectName(QStringLiteral("vpnStatusLabel"));
     m_statusLabel->setAlignment(Qt::AlignCenter);
+    rememberBaseFont(m_statusLabel);
     topLayout->addWidget(m_statusLabel, 0, Qt::AlignCenter);
 
     // Location picker + Recent picker
@@ -932,6 +988,7 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     //  Scrollable section: timer, info, hint, button
     QWidget* scrollContent = new QWidget();
     scrollContent->setObjectName(QStringLiteral("vpnScrollContent"));
+    scrollContent->installEventFilter(this); // see eventFilter()
     scrollContent->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 
     QVBoxLayout* scrollLayout = new QVBoxLayout(scrollContent);
@@ -942,6 +999,7 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_timerLabel = new QLabel(scrollContent);
     m_timerLabel->setObjectName(QStringLiteral("timerLabel"));
     m_timerLabel->setAlignment(Qt::AlignCenter);
+    rememberBaseFont(m_timerLabel);
     m_timerLabel->setVisible(false);
     scrollLayout->addWidget(m_timerLabel, 0, Qt::AlignCenter);
 
@@ -949,6 +1007,7 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_infoLabel = new QLabel(scrollContent);
     m_infoLabel->setObjectName(QStringLiteral("infoLabel"));
     m_infoLabel->setAlignment(Qt::AlignCenter);
+    rememberBaseFont(m_infoLabel);
     m_infoLabel->setWordWrap(true);
     m_infoLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     scrollLayout->addWidget(m_infoLabel);
@@ -1006,7 +1065,7 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
 
     // Scroll offset wrapper: gives the scroll area a COLLAPSED_DRAWER_WIDTH left margin so
     // it sits to the right of the drawer overlay.  The logo row and power-button
-    // section are NOT wrapped here, so they remain visually centred on the page.
+    // section are NOT wrapped here, so they remain visually centered on the page.
     m_scrollOffsetWidget = new QWidget(m_narrowContent);
     m_scrollOffsetWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_scrollOffsetLayout = new QVBoxLayout(m_scrollOffsetWidget);
@@ -1022,9 +1081,14 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_wideContent->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     m_wideContent->setVisible(false);
 
-    QHBoxLayout* wideLayout = new QHBoxLayout(m_wideContent);
-    wideLayout->setContentsMargins(0, 0, 0, 0);
-    wideLayout->setSpacing(0);
+    // A grid rather than a row, so the content can either sit in a column beside
+    // the dropdown sidebar or span the full width above it when the page is tall
+    // enough (see updateWideArrangement()).
+    m_wideGrid = new QGridLayout(m_wideContent);
+    m_wideGrid->setContentsMargins(0, 0, 0, 0);
+    m_wideGrid->setSpacing(0);
+    m_wideGrid->setColumnStretch(1, 1);
+    m_wideGrid->setRowStretch(0, 1);
 
     // Left column: picker sidebar (fixed width, pickers at bottom)
     m_pickerSidebar = new QWidget(m_wideContent);
@@ -1043,8 +1107,13 @@ VpnPage::VpnPage(VpnManager* manager, QWidget* parent)
     m_rightContentLayout->setSpacing(0);
     // topContentWidget and scrollArea are added here in applyWideMode(true)
 
-    wideLayout->addWidget(m_pickerSidebar);
-    wideLayout->addWidget(m_rightContent, 1);
+    m_wideGrid->addWidget(m_pickerSidebar, 0, 0);
+    m_wideGrid->addWidget(m_rightContent, 0, 1);
+
+    // Content and dropdown height changes (a new status line, an error box, a
+    // warning banner, a picker appearing) arrive as LayoutRequest events.
+    m_topContentWidget->installEventFilter(this);
+    m_pickerSidebar->installEventFilter(this);
     outerLayout->addWidget(m_wideContent, 1);
 
     // Elapsed timer
@@ -1589,6 +1658,9 @@ void VpnPage::applyWideMode(bool wide)
 
         // 5. Sidebar is shown only when at least one picker is available.
         m_pickerSidebar->setVisible(m_drawer->hasAnyVisiblePicker());
+
+        // 6. Centered above the dropdowns or beside them, depending on height.
+        scheduleWideArrangement();
     }
     else
     {
@@ -1690,10 +1762,105 @@ void VpnPage::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
     applyWideMode(event->size().width() >= kWideThreshold);
+    updateContentScale();
+    scheduleWideArrangement();
     if (m_wideMode == false && m_drawer != nullptr)
     {
         repositionDrawer();
     }
+}
+
+bool VpnPage::eventFilter(QObject* obj, QEvent* ev)
+{
+    // Installed on the content and the dropdown sidebar: any change in their
+    // height can decide whether the content still fits above the dropdowns.
+    if (ev->type() == QEvent::LayoutRequest)
+    {
+        scheduleWideArrangement();
+    }
+    return QWidget::eventFilter(obj, ev);
+}
+
+void VpnPage::scheduleWideArrangement()
+{
+    // Deferred so the sizes it measures come from the finished layout pass, and
+    // coalesced so a burst of layout requests costs one check.
+    if (m_arrangementPending == true) return;
+    m_arrangementPending = true;
+    QTimer::singleShot(0, this, [this]()
+    {
+        m_arrangementPending = false;
+        updateWideArrangement();
+    });
+}
+
+// In wide mode the dropdowns sit at the bottom left. When the page is tall
+// enough for the power button, status and info text to fit above them, the
+// content spans the full page width and is centered on it, like the logo.
+// Otherwise it sits in the column beside the dropdowns, so the two can never
+// overlap.
+void VpnPage::updateWideArrangement()
+{
+    if (m_wideMode == false) return;
+
+    bool centered = true;
+    if (m_pickerSidebar->isHidden() == false)
+    {
+        // Measured at the column width in both arrangements: across the full
+        // width the text wraps onto fewer lines, and judging by that height
+        // could flip the arrangement straight back after switching.
+        const int columnW = width() - kWideSidebarW;
+        const QLayout* scrollLayout = m_scrollArea->widget()->layout();
+        const int scrollH = scrollLayout->hasHeightForWidth()
+            ? scrollLayout->heightForWidth(columnW)
+            : scrollLayout->sizeHint().height();
+        const int contentH = m_topContentWidget->sizeHint().height() + scrollH;
+        const int available = height() - m_logoRow->sizeHint().height()
+                            - m_pickerSidebar->sizeHint().height();
+        centered = contentH + CENTERED_CONTENT_GAP <= available;
+    }
+    if (centered == m_wideCentered) return;
+    m_wideCentered = centered;
+
+    m_wideGrid->removeWidget(m_pickerSidebar);
+    m_wideGrid->removeWidget(m_rightContent);
+    if (centered == true)
+    {
+        m_wideGrid->addWidget(m_rightContent, 0, 0, 1, 2);
+        m_wideGrid->addWidget(m_pickerSidebar, 1, 0);
+    }
+    else
+    {
+        m_wideGrid->addWidget(m_pickerSidebar, 0, 0);
+        m_wideGrid->addWidget(m_rightContent, 0, 1);
+    }
+}
+
+// Scales the logo, power button, status text and the spacing between them with
+// the page, so a large or full-screen window is not a small cluster of controls
+// in a sea of empty space. The fixed sizes are designed for the default window,
+// where the scale is 1; it grows with whichever of the column width and page
+// height grew less, so the column keeps its proportions.
+void VpnPage::updateContentScale()
+{
+    const bool sidebarShown = m_wideMode == true && m_pickerSidebar->isHidden() == false;
+    const int columnW = width() - (sidebarShown ? kWideSidebarW : 0);
+    const qreal byWidth  = static_cast<qreal>(columnW) / REFERENCE_PAGE_WIDTH;
+    const qreal byHeight = static_cast<qreal>(height()) / REFERENCE_PAGE_HEIGHT;
+    const qreal clamped  = std::clamp(std::min(byWidth, byHeight), 1.0, MAX_CONTENT_SCALE);
+    const qreal scale    = std::round(clamped / CONTENT_SCALE_STEP) * CONTENT_SCALE_STEP;
+    if (qFuzzyCompare(scale, m_contentScale)) return;
+    m_contentScale = scale;
+
+    m_logo->setMaxWidth(qRound(LOGO_MAX_WIDTH * scale));
+    m_logoRowLayout->setContentsMargins(PAGE_H_MARGIN, qRound(LOGO_TOP_MARGIN * scale), PAGE_H_MARGIN, 0);
+    m_powerBtn->setScale(scale);
+    m_topLayout->setSpacing(qRound(TOP_SECTION_SPACING * scale));
+    m_topLayout->setContentsMargins(PAGE_H_MARGIN, qRound(TOP_SECTION_TOP_MARGIN * scale),
+                                    PAGE_H_MARGIN, qRound(TOP_SECTION_BTM_MARGIN * scale));
+    scaleLabelFont(m_statusLabel, scale);
+    scaleLabelFont(m_timerLabel, scale);
+    scaleLabelFont(m_infoLabel, scale);
 }
 
 void VpnPage::onCitiesReady(const QString& countryCode,

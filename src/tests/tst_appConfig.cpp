@@ -120,6 +120,29 @@ private slots:
         // Restore
         AppConfig::instance().setRecentConnectionsCount(5);
     }
+
+    void defaults_splitViewCountriesRatioIsDefault()
+    {
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), AppConfig::SPLIT_RATIO_DEFAULT);
+    }
+
+    void setSplitViewCountriesRatio_inRange_storesValue()
+    {
+        AppConfig::instance().setSplitViewCountriesRatio(0.5);
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), 0.5);
+        // Restore
+        AppConfig::instance().setSplitViewCountriesRatio(AppConfig::SPLIT_RATIO_DEFAULT);
+    }
+
+    void setSplitViewCountriesRatio_outOfRange_clamps()
+    {
+        AppConfig::instance().setSplitViewCountriesRatio(0.0);
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), AppConfig::SPLIT_RATIO_MIN);
+        AppConfig::instance().setSplitViewCountriesRatio(1.0);
+        QCOMPARE(AppConfig::instance().splitViewCountriesRatio(), AppConfig::SPLIT_RATIO_MAX);
+        // Restore
+        AppConfig::instance().setSplitViewCountriesRatio(AppConfig::SPLIT_RATIO_DEFAULT);
+    }
 };
 
 QTEST_MAIN(TstAppConfig)

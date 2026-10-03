@@ -46,6 +46,16 @@ constexpr int MIN_WINDOW_HEIGHT      = 580;
 constexpr int INITIAL_WINDOW_WIDTH   = 660;
 constexpr int INITIAL_WINDOW_HEIGHT  = 600;
 
+// Split view: from this window width on, the Countries list is shown beside
+// the VPN page instead of on its own page.
+constexpr int SPLIT_VIEW_MIN_WINDOW_WIDTH = 1200;
+// Narrowest the two sides of the split view can be dragged to. Together they
+// must fit in the stack at SPLIT_VIEW_MIN_WINDOW_WIDTH.
+constexpr int SPLIT_COUNTRIES_MIN_WIDTH   = 360;
+constexpr int SPLIT_VPN_MIN_WIDTH         = 560;
+// How long after the last divider drag its position is saved.
+constexpr int SPLIT_SAVE_DELAY_MS         = 500;
+
 // Sidebar layout
 constexpr int SIDEBAR_WIDTH          = 64;
 constexpr int SIDEBAR_DIVIDER_WIDTH  = 1;
@@ -192,9 +202,35 @@ MainWindow::MainWindow(QWidget* parent)
         m_loginPage->reset();
     });
 
-    // VPN page (index 3)
+    // VPN page (index 3). Hosted in a splitter so a wide window can show the
+    // Countries page beside it; the splitter holds only the VPN page otherwise.
     m_vpnPage = new VpnPage(m_manager);
-    m_stack->addWidget(m_vpnPage); // index 3
+    m_homeSplitter = new GripSplitter();
+    m_homeSplitter->setChildrenCollapsible(false);
+    m_homeSplitter->addWidget(m_vpnPage);
+    m_stack->addWidget(m_homeSplitter); // index 3
+
+    // Double-clicking the divider puts it back at its default position.
+    connect(m_homeSplitter, &GripSplitter::handleDoubleClicked, this, [this]()
+    {
+        m_splitSaveTimer->stop(); // a drag just before must not overwrite the reset
+        AppConfig::instance().setSplitViewCountriesRatio(AppConfig::SPLIT_RATIO_DEFAULT);
+        applySplitRatio();
+    });
+
+    m_splitSaveTimer = new QTimer(this);
+    m_splitSaveTimer->setSingleShot(true);
+    m_splitSaveTimer->setInterval(SPLIT_SAVE_DELAY_MS);
+    connect(m_splitSaveTimer, &QTimer::timeout, this, [this]()
+    {
+        const QList<int> sizes = m_homeSplitter->sizes();
+        if (m_splitView == false || sizes.size() != 2) return;
+        const int total = sizes.at(0) + sizes.at(1);
+        if (total <= 0) return;
+        AppConfig::instance().setSplitViewCountriesRatio(static_cast<double>(sizes.at(0)) / total);
+    });
+    // splitterMoved fires continuously during a drag; save once it settles.
+    connect(m_homeSplitter, &QSplitter::splitterMoved, m_splitSaveTimer, qOverload<>(&QTimer::start));
     connect(m_vpnPage, &VpnPage::connectRequested, m_manager,
             [this](const QString& country, const QString& city)
             {
@@ -217,7 +253,11 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Countries page (index 4)
     m_countriesPage = new CountriesPage(m_manager);
-    m_stack->addWidget(m_countriesPage); // index 4
+    m_countriesHost = new QWidget();
+    QVBoxLayout* countriesHostLayout = new QVBoxLayout(m_countriesHost);
+    countriesHostLayout->setContentsMargins(0, 0, 0, 0);
+    countriesHostLayout->addWidget(m_countriesPage);
+    m_stack->addWidget(m_countriesHost); // index 4
     connect(m_countriesPage, &CountriesPage::connectRequested, this,
             [this](const QString& country, const QString& city)
             {
@@ -559,6 +599,14 @@ void MainWindow::setupSidebar()
 
 void MainWindow::showPage(Page page)
 {
+    // The Countries page has no page of its own while it is part of the split
+    // view, so every way of opening it (nav, "Change country...", leaving the
+    // Debug page) lands on the split view instead.
+    if (page == Page::Countries && m_splitView == true)
+    {
+        page = Page::Vpn;
+    }
+
 #ifdef QT_DEBUG
     // Track where we came from so leaving Debug can return to the right page.
     if (page == Page::Debug)
@@ -782,9 +830,56 @@ void MainWindow::closeEvent(QCloseEvent* event)
     QWidget::closeEvent(event);
 }
 
+void MainWindow::applySplitView(const bool split)
+{
+    if (m_splitView == split) return;
+    m_splitView = split;
+
+    QLayout* hostLayout = m_countriesHost->layout();
+    if (split == true)
+    {
+        const bool wasOnCountries = m_stack->currentIndex() == std::to_underlying(Page::Countries);
+
+        hostLayout->removeWidget(m_countriesPage);
+        m_countriesPage->setMinimumWidth(SPLIT_COUNTRIES_MIN_WIDTH);
+        m_vpnPage->setMinimumWidth(SPLIT_VPN_MIN_WIDTH);
+        m_homeSplitter->insertWidget(0, m_countriesPage);
+        m_countriesPage->show();
+        applySplitRatio();
+
+        m_countriesNavBtn->setVisible(false);
+        if (wasOnCountries == true)
+        {
+            showPage(Page::Vpn);
+        }
+    }
+    else
+    {
+        m_splitSaveTimer->stop();
+        m_countriesPage->setMinimumWidth(0);
+        m_vpnPage->setMinimumWidth(0);
+        // Reparenting takes it out of the splitter.
+        m_countriesPage->setParent(m_countriesHost);
+        hostLayout->addWidget(m_countriesPage);
+        m_countriesPage->show();
+        m_countriesNavBtn->setVisible(true);
+    }
+}
+
+void MainWindow::applySplitRatio()
+{
+    if (m_splitView == false) return;
+    // The stack, not the splitter: when the VPN page is not the current page
+    // the splitter is hidden and its width is stale.
+    const int total = m_stack->width() - m_homeSplitter->handleWidth();
+    const int countriesW = qRound(total * AppConfig::instance().splitViewCountriesRatio());
+    m_homeSplitter->setSizes({countriesW, total - countriesW});
+}
+
 void MainWindow::resizeEvent(QResizeEvent* event)
 {
     QWidget::resizeEvent(event);
+    applySplitView(width() >= SPLIT_VIEW_MIN_WINDOW_WIDTH);
 #ifdef QT_DEBUG
     repositionLoginDebugBtn();
 #endif

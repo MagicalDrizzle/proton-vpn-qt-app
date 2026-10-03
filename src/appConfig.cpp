@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <QFile>
 // ReSharper disable once CppUnusedIncludeDirective
 #include <QJsonDocument> // Ignore unused include warning; we do use QJsonDocument
@@ -77,6 +78,11 @@ void AppConfig::load()
     m_lastSeenVersion = obj.value(QStringLiteral("last_seen_version")).toString();
     m_checkForUpdates = obj.value(QStringLiteral("check_for_updates")).toBool(true);
     m_logToFile = obj.value(QStringLiteral("log_to_file")).toBool(false);
+    // Clamped on read too: the file is user-editable, and a ratio outside the
+    // range would squeeze one side of the split view to nothing.
+    m_splitViewCountriesRatio = std::clamp(
+        obj.value(QStringLiteral("split_view_countries_ratio")).toDouble(SPLIT_RATIO_DEFAULT),
+        SPLIT_RATIO_MIN, SPLIT_RATIO_MAX);
 
     const QString themeStr = obj.value(QStringLiteral("theme")).toString(QStringLiteral("system"));
     if (themeStr == QStringLiteral("dark"))
@@ -108,6 +114,7 @@ void AppConfig::logLoadedConfig() const
     DBG_SETTINGS(QStringLiteral("  last_seen_version        = ") + m_lastSeenVersion);
     DBG_SETTINGS(QStringLiteral("  check_for_updates        = ") + (m_checkForUpdates ? QStringLiteral("true") : QStringLiteral("false")));
     DBG_SETTINGS(QStringLiteral("  log_to_file              = ") + (m_logToFile ? QStringLiteral("true") : QStringLiteral("false")));
+    DBG_SETTINGS(QStringLiteral("  split_view_countries_ratio = ") + QString::number(m_splitViewCountriesRatio));
     DBG_SETTINGS(QStringLiteral("  theme                    = ") + themeName(m_theme));
 }
 
@@ -132,6 +139,7 @@ bool AppConfig::save() const
     }
     obj[QStringLiteral("check_for_updates")] = m_checkForUpdates;
     obj[QStringLiteral("log_to_file")] = m_logToFile;
+    obj[QStringLiteral("split_view_countries_ratio")] = m_splitViewCountriesRatio;
 
     obj[QStringLiteral("theme")] = themeName(m_theme);
 
@@ -185,6 +193,17 @@ void AppConfig::setStartHidden(const bool value)
     if (m_startHidden == value) return;
     DBG_SETTINGS(QStringLiteral("Setting changed: start_hidden = ") + (value ? QStringLiteral("true") : QStringLiteral("false")));
     m_startHidden = value;
+    (void)save();
+}
+
+double AppConfig::splitViewCountriesRatio() const { return m_splitViewCountriesRatio; }
+
+void AppConfig::setSplitViewCountriesRatio(const double value)
+{
+    const double clamped = std::clamp(value, SPLIT_RATIO_MIN, SPLIT_RATIO_MAX);
+    if (qFuzzyCompare(m_splitViewCountriesRatio, clamped)) return;
+    DBG_SETTINGS(QStringLiteral("Setting changed: split_view_countries_ratio = ") + QString::number(clamped));
+    m_splitViewCountriesRatio = clamped;
     (void)save();
 }
 
@@ -289,6 +308,7 @@ void AppConfig::resetToDefaults()
     m_lastSeenVersion        = QString();
     m_checkForUpdates        = true;
     m_logToFile              = false;
+    m_splitViewCountriesRatio = SPLIT_RATIO_DEFAULT;
     FileLogger::instance().setEnabled(false);
 }
 
