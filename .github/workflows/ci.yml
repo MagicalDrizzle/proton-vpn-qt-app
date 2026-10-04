@@ -101,17 +101,17 @@ jobs:
         run: |
           flatpak build-bundle \
             .flatpak-repo \
-            io.github.wheat32.ProtonVPNQt.flatpak \
+            io.github.wheat32.ProtonVPNQt-x86_64.flatpak \
             io.github.wheat32.ProtonVPNQt
 
       - name: Confirm bundle exists
-        run: test -f io.github.wheat32.ProtonVPNQt.flatpak
+        run: test -f io.github.wheat32.ProtonVPNQt-x86_64.flatpak
 
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
           name: flatpak-x86_64-ci
-          path: io.github.wheat32.ProtonVPNQt.flatpak
+          path: io.github.wheat32.ProtonVPNQt-x86_64.flatpak
           retention-days: 7
 
   # ARM64 counterpart of build-flatpak, on a native ARM runner (no emulation).

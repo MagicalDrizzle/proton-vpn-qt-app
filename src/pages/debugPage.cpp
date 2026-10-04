@@ -37,6 +37,7 @@ constexpr int DEFAULT_RECENT_COUNT      = 5;
 constexpr int VALUE_COL_STRETCH         = 1;
 constexpr int MIGRATION_VERSION_WIDTH   = 90;
 constexpr int MIGRATION_BTN_WIDTH       = 80;
+constexpr int SIGNIN_SCREEN_COLUMNS     = 2;
 
 QLabel* makeSectionHeader(const QString& text, QWidget* parent)
 {
@@ -206,6 +207,55 @@ DebugPage::DebugPage(QWidget* parent)
            "Its Try Again button runs the real login check."));
     connect(cliNotRespondingBtn, &QPushButton::clicked, this, &DebugPage::cliNotRespondingPageRequested);
     layout->addWidget(cliNotRespondingBtn, 0, Qt::AlignLeft);
+
+    layout->addWidget(makeDivider(content));
+
+    //  Sign-in screens section
+    // Every screen the second factor can show, with the error it would carry,
+    // for reviewing the design without a 2FA account or a security key.
+    layout->addWidget(makeSectionHeader(tr("Sign-in Screens"), content));
+    {
+        struct Screen
+        {
+            QString name;
+            SigninPrompt prompt;
+            QString error;
+        };
+        const QList<Screen> screens = {
+            {tr("Authenticator Code"), SigninPrompt::Code, QString()},
+            {tr("Code Rejected"), SigninPrompt::Code, signinRejectedMessage(SigninPrompt::Code)},
+            {tr("Key: Waiting"), SigninPrompt::SecurityKey, QString()},
+            {tr("Key: Touch"), SigninPrompt::SecurityKeyTouch, QString()},
+            {tr("Key: PIN"), SigninPrompt::SecurityKeyPin, QString()},
+            {tr("Key: Wrong PIN"), SigninPrompt::SecurityKeyPin, signinRejectedMessage(SigninPrompt::SecurityKeyPin)},
+            {tr("Key: Not Detected"), SigninPrompt::SecurityKeyMissing, QString()},
+            {tr("Key: Multiple Keys"), SigninPrompt::SecurityKeyChoose, QString()},
+            {tr("Key: Signing In"), SigninPrompt::SecurityKeyRead, QString()},
+            // The CLI's own message for a key that could not be used.
+            {tr("Key: Failed"), SigninPrompt::SecurityKeyFailed,
+             QStringLiteral("Security key authentication failed. Please try again.")},
+        };
+
+        QWidget* gridWidget = new QWidget(content);
+        QGridLayout* grid = new QGridLayout(gridWidget);
+        grid->setContentsMargins(0, 0, 0, 0);
+        grid->setHorizontalSpacing(GRID_H_SPACING);
+        grid->setVerticalSpacing(GRID_V_SPACING);
+        for (qsizetype i = 0; i < screens.size(); ++i)
+        {
+            const Screen& screen = screens.at(i);
+            QPushButton* btn = new QPushButton(screen.name, gridWidget);
+            btn->setObjectName(QStringLiteral("secondaryButton"));
+            btn->setCursor(Qt::PointingHandCursor);
+            connect(btn, &QPushButton::clicked, this, [this, screen]()
+            {
+                emit signinScreenRequested(screen.prompt, screen.error);
+            });
+            grid->addWidget(btn, static_cast<int>(i / SIGNIN_SCREEN_COLUMNS),
+                            static_cast<int>(i % SIGNIN_SCREEN_COLUMNS));
+        }
+        layout->addWidget(gridWidget, 0, Qt::AlignLeft);
+    }
 
     layout->addWidget(makeDivider(content));
 

@@ -1,5 +1,6 @@
 #include "loginPage.h"
 #include "../geoUtils.h"
+#include "../widgets/stackPage.h"
 #include "../widgets/svgBanner.h"
 
 #include <QFile>
@@ -34,6 +35,10 @@ constexpr int ERROR_H_MARGIN            = 32;
 constexpr int ERROR_BOT_MARGIN          = 16;
 constexpr int STACK_INDEX_CREDS         = 0;
 constexpr int STACK_INDEX_TFA           = 1;
+constexpr int STACK_INDEX_KEY           = 2;
+// security-key.svg (a key going into a laptop) is drawn 329 x 120.
+constexpr double SECURITY_KEY_ART_WIDTH  = 329.0;
+constexpr double SECURITY_KEY_ART_HEIGHT = 120.0;
 
 QIcon svgIcon(const QString& path, const QSize& size = {SVG_ICON_SIZE, SVG_ICON_SIZE})
 {
@@ -55,14 +60,17 @@ LoginPage::LoginPage(QWidget* parent)
     cardLayout->setSpacing(0);
     cardLayout->setContentsMargins(0, 0, 0, 0);
 
-    // Inner stack: 0 = credentials, 1 = 2FA
+    // Inner stack: 0 = credentials, 1 = 2FA code, 2 = security key. Each is
+    // a StackPage, so it keeps its own height rather than the tallest one's.
     m_stack = new QStackedWidget(card);
 
     buildCredsWidget();
     buildTFAWidget();
+    buildSecurityKeyWidget();
 
     m_stack->addWidget(m_credsWidget); // index 0
     m_stack->addWidget(m_tfaWidget);   // index 1
+    m_stack->addWidget(m_keyWidget);   // index 2
     cardLayout->addWidget(m_stack);
 
     // Shared error section below the stack
@@ -127,7 +135,7 @@ LoginPage::LoginPage(QWidget* parent)
 
 void LoginPage::buildCredsWidget()
 {
-    m_credsWidget = new QWidget();
+    m_credsWidget = new StackPage();
     QVBoxLayout* layout = new QVBoxLayout(m_credsWidget);
     layout->setSpacing(LOGIN_LAYOUT_SPACING);
     layout->setContentsMargins(LOGIN_H_MARGIN, LOGIN_TOP_MARGIN, LOGIN_H_MARGIN, LOGIN_BOT_MARGIN);
@@ -211,7 +219,7 @@ void LoginPage::buildCredsWidget()
 
 void LoginPage::buildTFAWidget()
 {
-    m_tfaWidget = new QWidget();
+    m_tfaWidget = new StackPage();
     QVBoxLayout* layout = new QVBoxLayout(m_tfaWidget);
     layout->setSpacing(LOGIN_LAYOUT_SPACING);
     layout->setContentsMargins(LOGIN_H_MARGIN, LOGIN_TOP_MARGIN, LOGIN_H_MARGIN, LOGIN_BOT_MARGIN);
@@ -268,7 +276,166 @@ void LoginPage::buildTFAWidget()
     layout->addWidget(m_tfaCancelBtn);
 }
 
-void LoginPage::show2FAPrompt() const
+void LoginPage::buildSecurityKeyWidget()
+{
+    m_keyWidget = new StackPage();
+    QVBoxLayout* layout = new QVBoxLayout(m_keyWidget);
+    layout->setSpacing(LOGIN_LAYOUT_SPACING);
+    layout->setContentsMargins(LOGIN_H_MARGIN, LOGIN_TOP_MARGIN, LOGIN_H_MARGIN, LOGIN_BOT_MARGIN);
+
+    // A key going into a laptop, in place of the logo. Its laptop and arrow
+    // are white for dark themes; the light version draws them dark.
+    SvgBanner* art = new SvgBanner(QStringLiteral(":/assets/security-key.svg"),
+                                   SECURITY_KEY_ART_WIDTH / SECURITY_KEY_ART_HEIGHT, m_keyWidget);
+    art->setLightResource(QStringLiteral(":/assets/security-key-light.svg"));
+    layout->addWidget(art, 0, Qt::AlignCenter);
+
+    QLabel* titleLabel = new QLabel(tr("Security Key"), m_keyWidget);
+    titleLabel->setObjectName(QStringLiteral("sectionTitle"));
+    titleLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(titleLabel);
+
+    m_keyStatusLabel = new QLabel(m_keyWidget);
+    m_keyStatusLabel->setObjectName(QStringLiteral("fieldLabel"));
+    m_keyStatusLabel->setWordWrap(true);
+    m_keyStatusLabel->setAlignment(Qt::AlignCenter);
+    layout->addWidget(m_keyStatusLabel);
+
+    m_keyPinLabel = new QLabel(tr("PIN"), m_keyWidget);
+    m_keyPinLabel->setObjectName(QStringLiteral("fieldLabel"));
+    layout->addWidget(m_keyPinLabel);
+
+    m_keyPinEdit = new QLineEdit(m_keyWidget);
+    m_keyPinEdit->setObjectName(QStringLiteral("inputField"));
+    m_keyPinEdit->setPlaceholderText(tr("Security key PIN"));
+    m_keyPinEdit->setEchoMode(QLineEdit::Password);
+    layout->addWidget(m_keyPinEdit);
+
+    m_keyActionBtn = new QPushButton(m_keyWidget);
+    m_keyActionBtn->setObjectName(QStringLiteral("primaryButton"));
+    m_keyActionBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_keyActionBtn, &QPushButton::clicked, this, [this]()
+    {
+        if (m_keyPrompt == SigninPrompt::SecurityKeyPin)
+        {
+            emit securityKeyPinSubmitted(m_keyPinEdit->text());
+        }
+        else
+        {
+            emit securityKeyRetryRequested();
+        }
+    });
+    connect(m_keyPinEdit, &QLineEdit::returnPressed, m_keyActionBtn, &QPushButton::click);
+    layout->addWidget(m_keyActionBtn);
+
+    m_keyUseCodeBtn = new QPushButton(tr("Use Authenticator Code Instead"), m_keyWidget);
+    m_keyUseCodeBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_keyUseCodeBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_keyUseCodeBtn, &QPushButton::clicked, this, &LoginPage::useAuthenticatorCodeRequested);
+    layout->addWidget(m_keyUseCodeBtn);
+
+    m_keyCancelBtn = new QPushButton(tr("Go Back"), m_keyWidget);
+    m_keyCancelBtn->setObjectName(QStringLiteral("secondaryButton"));
+    m_keyCancelBtn->setCursor(Qt::PointingHandCursor);
+    connect(m_keyCancelBtn, &QPushButton::clicked, this, &LoginPage::loginCancelRequested);
+    layout->addWidget(m_keyCancelBtn);
+}
+
+void LoginPage::showSigninPrompt(const SigninPrompt prompt, const QString& error)
+{
+    if (prompt == SigninPrompt::Code)
+    {
+        showCodePrompt();
+    }
+    else
+    {
+        showSecurityKey(prompt);
+    }
+    setError(error);
+}
+
+void LoginPage::showSecurityKey(const SigninPrompt prompt)
+{
+    m_keyPrompt = prompt;
+
+    QString status;
+    QString action;
+    switch (prompt)
+    {
+        case SigninPrompt::SecurityKeyTouch:
+            status = tr("Press the button on your security key.");
+            break;
+
+        case SigninPrompt::SecurityKeyPin:
+            status = tr("Enter the PIN for your security key.");
+            action = tr("Continue");
+            break;
+
+        case SigninPrompt::SecurityKeyMissing:
+            status = tr("No security key detected. Insert your security key, then select Try Again.");
+            action = tr("Try Again");
+            break;
+
+        case SigninPrompt::SecurityKeyChoose:
+            status = tr("Multiple security keys were found. Tap the one you want to use.");
+            break;
+
+        case SigninPrompt::SecurityKeyRead:
+            status = tr("Security key read. Signing in\u2026");
+            break;
+
+        case SigninPrompt::SecurityKeyFailed:
+            status = tr("Your security key could not be used to sign in.");
+            action = tr("Try Again");
+            break;
+
+        case SigninPrompt::SecurityKey:
+        case SigninPrompt::Code:
+        default:
+            status = tr("Waiting for your security key\u2026");
+            break;
+    }
+
+    const bool askingPin = prompt == SigninPrompt::SecurityKeyPin;
+    m_keyStatusLabel->setText(status);
+    m_keyPinLabel->setVisible(askingPin);
+    m_keyPinEdit->setVisible(askingPin);
+    m_keyPinEdit->clear();
+    m_keyPinEdit->setEnabled(true);
+    m_keyActionBtn->setVisible(action.isEmpty() == false);
+    m_keyActionBtn->setText(action);
+    m_keyActionBtn->setEnabled(true);
+    // Once the key has been read, signing in is already under way: there is
+    // nothing to switch to or go back from.
+    const bool keyRead = prompt == SigninPrompt::SecurityKeyRead;
+    m_keyUseCodeBtn->setVisible(keyRead == false);
+    m_keyUseCodeBtn->setEnabled(true);
+    m_keyCancelBtn->setVisible(keyRead == false);
+    m_keyCancelBtn->setText(tr("Go Back")); // a Debug page preview relabels it
+    m_keyCancelBtn->setEnabled(true);
+
+    m_stack->setCurrentIndex(STACK_INDEX_KEY);
+    if (askingPin == true)
+    {
+        m_keyPinEdit->setFocus();
+    }
+}
+
+#ifdef QT_DEBUG
+void LoginPage::showSigninPreview(const SigninPrompt prompt, const QString& error)
+{
+    showSigninPrompt(prompt, error);
+    // The signing-in screen has no Go Back, but a preview needs one to
+    // return to the Debug page.
+    if (prompt == SigninPrompt::SecurityKeyRead)
+    {
+        m_keyCancelBtn->setText(tr("DEBUG: Go Back"));
+        m_keyCancelBtn->setVisible(true);
+    }
+}
+#endif
+
+void LoginPage::showCodePrompt() const
 {
     setError(QString());
     m_tfaEdit->clear();
@@ -285,6 +452,7 @@ void LoginPage::reset() const
     setError(QString());
     m_passwordEdit->clear();
     m_tfaEdit->clear();
+    m_keyPinEdit->clear();
     m_loginBtn->setText(tr("Sign In"));
     updateSignInEnabled();
     m_usernameEdit->setEnabled(true);
@@ -341,12 +509,24 @@ void LoginPage::setLoading(const bool loading) const
         m_passwordEdit->setEnabled(loading == false);
         m_togglePasswordBtn->setEnabled(loading == false);
     }
-    else
+    else if (m_stack->currentIndex() == STACK_INDEX_TFA)
     {
         m_tfaSubmitBtn->setEnabled(loading == false);
         m_tfaSubmitBtn->setText(loading == true ? tr("Verifying\u2026") : tr("Verify"));
         m_tfaEdit->setEnabled(loading == false);
         m_tfaCancelBtn->setEnabled(loading == false);
+    }
+    else
+    {
+        // The CLI answers with the next prompt, which resets the view; Go
+        // Back stays available meanwhile.
+        m_keyActionBtn->setEnabled(loading == false);
+        m_keyPinEdit->setEnabled(loading == false);
+        m_keyUseCodeBtn->setEnabled(loading == false);
+        if (m_keyPrompt == SigninPrompt::SecurityKeyPin)
+        {
+            m_keyActionBtn->setText(loading == true ? tr("Verifying\u2026") : tr("Continue"));
+        }
     }
 }
 

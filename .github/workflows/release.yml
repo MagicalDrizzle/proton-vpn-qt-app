@@ -100,14 +100,14 @@ jobs:
         run: |
           flatpak build-bundle \
             .flatpak-repo \
-            io.github.wheat32.ProtonVPNQt.flatpak \
+            io.github.wheat32.ProtonVPNQt-x86_64.flatpak \
             io.github.wheat32.ProtonVPNQt
 
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
           name: flatpak-bundle
-          path: io.github.wheat32.ProtonVPNQt.flatpak
+          path: io.github.wheat32.ProtonVPNQt-x86_64.flatpak
 
   # Same build as build-flatpak, for ARM64 on a native ARM runner (no
   # emulation). Only the bundle name differs: the x86_64 bundle keeps its
@@ -445,7 +445,7 @@ jobs:
             | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-x86_64.AppImage` | x86_64 | AppImage: Qt app only; requires the ProtonVPN CLI installed on your system |
             | `ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-aarch64.AppImage` | ARM64 (aarch64) | AppImage: Qt app only; requires the ProtonVPN CLI installed on your system |
             | `proton-vpn-qt-app-linux-x86_64.tar.gz` | x86_64 | Native binary (requires ProtonVPN CLI on host) |
-            | `io.github.wheat32.ProtonVPNQt.flatpak` | x86_64 | Flatpak bundle (requires ProtonVPN CLI on host) |
+            | `io.github.wheat32.ProtonVPNQt-x86_64.flatpak` | x86_64 | Flatpak bundle (requires ProtonVPN CLI on host) |
             | `io.github.wheat32.ProtonVPNQt-aarch64.flatpak` | ARM64 (aarch64) | Flatpak bundle (requires ProtonVPN CLI on host) |
 
             Most desktops and laptops are **x86_64**. Choose **ARM64** for ARM machines such as a Raspberry Pi or a Snapdragon laptop; the commands below use the x86_64 filenames, so swap in the `-aarch64` file on ARM.
@@ -472,7 +472,7 @@ jobs:
             The Flatpak calls the host's `protonvpn` CLI via `flatpak-spawn --host`, so the [Proton VPN Linux CLI](https://protonvpn.com/support/linux-vpn-tool/) must be installed on your host system.
 
             ```bash
-            flatpak install io.github.wheat32.ProtonVPNQt.flatpak
+            flatpak install io.github.wheat32.ProtonVPNQt-x86_64.flatpak
             flatpak run io.github.wheat32.ProtonVPNQt
             ```
 
@@ -484,6 +484,6 @@ jobs:
             ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-x86_64.AppImage
             ProtonVPN-Qt-${{ steps.tag.outputs.VERSION }}-lite-aarch64.AppImage
             proton-vpn-qt-app-linux-x86_64.tar.gz
-            io.github.wheat32.ProtonVPNQt.flatpak
+            io.github.wheat32.ProtonVPNQt-x86_64.flatpak
             io.github.wheat32.ProtonVPNQt-aarch64.flatpak
           make_latest: true

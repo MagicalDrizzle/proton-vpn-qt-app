@@ -64,12 +64,21 @@ set(SOURCES
         cli/cliSession.h
         cli/cliSettings.h
         cli/cliTable.h
+        cli/cliVersion.h
         cli/logRedaction.h
+        cli/signin/signinFlow.h
+        cli/signin/signinFlow.cpp
+        cli/signin/legacySigninFlow.h
+        cli/signin/securityKeySigninFlow.h
+        cli/signin/securityKeySigninFlow.cpp
+        cli/signin/signinFlows.h
+        cli/signin/signinFlows.cpp
         cli/flatpakUtils.h
         cli/platformUtils.h
         mainWindow.h
         mainWindow.cpp
         widgets/elidaLabel.h
+        widgets/stackPage.h
         widgets/infoBanner.h
         widgets/numberSpinner.h
         widgets/globeWidget.h

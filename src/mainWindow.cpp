@@ -163,39 +163,51 @@ MainWindow::MainWindow(QWidget* parent)
     // Login page (index 2)
     m_loginPage = new LoginPage();
     m_stack->addWidget(m_loginPage); // index 2
-    connect(m_loginPage, &LoginPage::loginRequested, this, [this](const QString& u, const QString& p)
+    // Each answer shows as in progress until the CLI asks for the next thing
+    // (signinPrompt) or sign-in ends (loginFinished). Retrying after the CLI
+    // gives up, with the credentials it was started with, is the sign-in
+    // flow's job (cli/signin/).
+    const auto answering = [this]()
     {
-        m_loginUsername = u;
-        m_loginPassword = p;
-        m_pending2FAToken.clear();
         m_loginPage->setLoading(true);
         m_loginPage->setError(QString());
+    };
+    connect(m_loginPage, &LoginPage::loginRequested, this, [this, answering](const QString& u, const QString& p)
+    {
+        answering();
         m_manager->login(u, p);
     });
-    connect(m_loginPage, &LoginPage::twoFASubmitted, this, [this](const QString& token)
+    connect(m_loginPage, &LoginPage::twoFASubmitted, this, [this, answering](const QString& code)
     {
-        m_loginPage->setLoading(true);
-        m_loginPage->setError(QString());
-        if (m_manager->isLoginInProgress())
-        {
-            m_manager->submit2FA(token);
-        }
-        else
-        {
-            // The signin process died after a failed 2FA attempt. Restart login
-            // with the saved credentials and auto-submit the new token once the
-            // password prompt is cleared and the 2FA prompt appears again.
-            m_pending2FAToken = token;
-            m_manager->login(m_loginUsername, m_loginPassword);
-        }
+        answering();
+        m_manager->submit2FA(code);
+    });
+    connect(m_loginPage, &LoginPage::securityKeyPinSubmitted, this, [this, answering](const QString& pin)
+    {
+        answering();
+        m_manager->submitSecurityKeyPin(pin);
+    });
+    connect(m_loginPage, &LoginPage::securityKeyRetryRequested, this, [this, answering]()
+    {
+        answering();
+        m_manager->retrySecurityKey();
+    });
+    connect(m_loginPage, &LoginPage::useAuthenticatorCodeRequested, this, [this, answering]()
+    {
+        answering();
+        m_manager->useAuthenticatorCode();
     });
     connect(m_loginPage, &LoginPage::loginCancelRequested, this, [this]()
     {
         m_manager->cancelLogin();
-        m_loginUsername.clear();
-        m_loginPassword.clear();
-        m_pending2FAToken.clear();
         m_loginPage->reset();
+#ifdef QT_DEBUG
+        // Going back from a Debug page preview returns to the Debug page.
+        if (m_signinPreview == true)
+        {
+            showPage(Page::Debug);
+        }
+#endif
     });
 
     // VPN page (index 3). Hosted in a splitter so a wide window can show the
@@ -308,6 +320,16 @@ MainWindow::MainWindow(QWidget* parent)
             this, &MainWindow::showNotInstalled);
     connect(m_debugPage, &DebugPage::cliNotRespondingPageRequested,
             this, &MainWindow::showCliNotResponding);
+    connect(m_debugPage, &DebugPage::signinScreenRequested,
+            this, [this](const SigninPrompt prompt, const QString& error)
+    {
+        // A preview only: with no sign-in in progress, its buttons do nothing
+        // but Go Back, which returns to the Debug page.
+        m_loginPage->reset();
+        m_loginPage->showSigninPreview(prompt, error);
+        m_signinPreview = true;
+        showPage(Page::Login);
+    });
 
     // Floating debug button shown at bottom-left during login (sidebar is hidden then)
     m_loginDebugBtn = new QToolButton(this);
@@ -370,30 +392,13 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(m_manager, &VpnManager::loginCheckTimedOut, this, &MainWindow::showCliNotResponding);
 
-    connect(m_manager, &VpnManager::twoFactorRequired, this, [this]()
-    {
-        if (m_pending2FAToken.isEmpty() == false)
-        {
-            // Retry path: automatically submit the token the user already typed
-            // without bouncing the UI back to the 2FA input screen.
-            m_manager->submit2FA(m_pending2FAToken);
-            m_pending2FAToken.clear();
-        }
-        else
-        {
-            m_loginPage->setLoading(false);
-            m_loginPage->show2FAPrompt();
-        }
-    });
+    connect(m_manager, &VpnManager::signinPrompt, m_loginPage, &LoginPage::showSigninPrompt);
 
     connect(m_manager, &VpnManager::loginFinished, this, [this](bool ok, const QString& error)
     {
         m_loginPage->setLoading(false);
         if (ok)
         {
-            m_loginUsername.clear();
-            m_loginPassword.clear();
-            m_pending2FAToken.clear();
             m_loginPage->reset();
             m_sidebar->setEnabled(true);
             showPage(Page::Vpn);
@@ -612,11 +617,19 @@ void MainWindow::showPage(Page page)
 
 #ifdef QT_DEBUG
     // Track where we came from so leaving Debug can return to the right page.
+    // A sign-in preview belongs to the Debug page, so leaving it keeps the
+    // page Debug was opened from (and its sidebar).
     if (page == Page::Debug)
     {
         const Page current = static_cast<Page>(m_stack->currentIndex());
-        if (current != Page::Debug)
+        if (current != Page::Debug && m_signinPreview == false)
+        {
             m_preDebugPage = current;
+        }
+    }
+    if (page != Page::Login)
+    {
+        m_signinPreview = false;
     }
 
     const bool onLoginPage = (page == Page::Login)
