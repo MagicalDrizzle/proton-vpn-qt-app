@@ -10,15 +10,19 @@
 #include "cliSession.h"
 #include "cliSettings.h"
 #include "cliTable.h"
+#include "cliVersion.h"
 #include "logRedaction.h"
 #include "flatpakUtils.h"
 #include "statusMonitor.h"
+#include "signin/signinFlows.h"
 #include "../uiHelpers.h"
 
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTimer>
+#include <QVersionNumber>
 #include <algorithm>
+#include <csignal>
 #include <functional>
 #include <memory>
 #include <ranges>
@@ -41,12 +45,20 @@ constexpr int AUTO_CONNECT_RETRIES        = 5;
 // second. The limit is generous because the CLI may be legitimately waiting
 // on a keyring unlock prompt the user is still typing into.
 constexpr int KEYRING_PROMPT_TIMEOUT_MS = 30000;
-// How long a timed-out CLI gets to exit after SIGTERM before it is killed.
+// `protonvpn` without a command only prints its banner, in well under a
+// second; sign-in reads its version from it.
+constexpr int VERSION_CHECK_TIMEOUT_MS = 10000;
+// How long a CLI that was asked to stop (a timeout, or a canceled sign-in)
+// gets to exit before it is killed.
 constexpr int CLI_TERMINATE_GRACE_MS = 2000;
 // Exit codes runCommand() reports when the CLI never produced one of its own.
 // Negative, so they can never collide with a real process exit status.
 constexpr int CLI_EXIT_FAILED_TO_START = -1;
 constexpr int CLI_EXIT_TIMED_OUT       = -2;
+// A sign-in CLI ended by a signal: its exit code is then the signal number.
+constexpr int CLI_EXIT_CRASHED         = -3;
+// Where the username is in every sign-in flow's arguments ("signin <username> ...").
+constexpr int SIGNIN_USERNAME_ARG = 1;
 
 // Returns {program, fullArgs} ready for QProcess::start.
 std::pair<QString, QStringList> buildCliCommand(const QStringList& args)
@@ -68,27 +80,6 @@ bool reportsDisconnected(const QString& out)
     {
         return line.trimmed() == QLatin1String("Disconnected.");
     });
-}
-
-// True when the CLI output contains a line that actually reports a failure.
-//
-// This deliberately anchors on the start of a line instead of searching the
-// whole output for "error": the CLI prints warnings and guidance that merely
-// contain that word, and matching those marked a *successful* sign-in as
-// failed - leaving the user staring at a login error while already signed in,
-// with the status monitor never started.
-bool hasCliErrorLine(const QString& combined)
-{
-    const QStringList lines = combined.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-    for (const QString& line : lines)
-    {
-        const QString l = line.trimmed().toLower();
-        if (l.startsWith(QLatin1String("error"))) return true;
-        if (l.startsWith(QLatin1String("failed"))) return true;
-        if (l.contains(QLatin1String("invalid credentials"))) return true;
-        if (l.contains(QLatin1String("incorrect login"))) return true;
-    }
-    return false;
 }
 
 // The rows of `protonvpn cities list` as (city, features), e.g.
@@ -349,19 +340,95 @@ void VpnManager::checkLoginStatus(int retriesLeft)
 void VpnManager::login(const QString& username, const QString& password)
 {
     DBG_CLI(QStringLiteral("Login attempt for user: ") + LogRedaction::username(username));
-    // CLI flow: protonvpn signin <username>
-    //   stderr: "Password: "   -> write password + '\n' to stdin
-    //   stderr: "2FA Token: "  -> optional; emit twoFactorRequired()
+    endSignin();
+    const int attempt = m_signinAttempt;
 
-    if (m_signinProcess != nullptr)
+    // How `protonvpn signin` talks depends on the CLI's version, and the CLI
+    // may have been updated since the app started, so the version is read
+    // again here instead of taken from startup.
+    runCommand({}, [this, attempt, username, password](int, const QString& out, const QString& err)
     {
-        m_signinProcess->kill();
-        m_signinProcess->deleteLater();
-        m_signinProcess = nullptr;
-    }
+        if (attempt != m_signinAttempt) return; // canceled, or another sign-in started
+        const QString version = CliVersion::fromBanner(out + QLatin1Char('\n') + err);
+        m_signinFlow = SigninFlows::forCliVersion(QVersionNumber::fromString(version));
+        DBG_CLI(QStringLiteral("Signing in with CLI %1: %2.")
+                    .arg(version.isEmpty() ? QStringLiteral("(version unknown)") : version,
+                         signinFlowName(m_signinFlow->kind())));
+        applySigninEffects(m_signinFlow->begin(username, password));
+    }, VERSION_CHECK_TIMEOUT_MS);
+}
 
-    m_signinProcess = new QProcess(this);
-    QProcess* process = m_signinProcess;
+void VpnManager::cancelLogin()
+{
+    DBG_CLI(QStringLiteral("Sign-in canceled."));
+    endSignin();
+}
+
+void VpnManager::submit2FA(const QString& code)
+{
+    if (m_signinFlow == nullptr) return; // no sign-in in progress, e.g. a Debug page preview
+    DBG_CLI(QStringLiteral("Submitting the two-factor code."));
+    applySigninEffects(m_signinFlow->submitCode(code));
+}
+
+void VpnManager::submitSecurityKeyPin(const QString& pin)
+{
+    if (m_signinFlow == nullptr) return;
+    DBG_CLI(QStringLiteral("Submitting the security key PIN."));
+    applySigninEffects(m_signinFlow->submitPin(pin));
+}
+
+void VpnManager::retrySecurityKey()
+{
+    if (m_signinFlow == nullptr) return;
+    DBG_CLI(QStringLiteral("Trying the security key again."));
+    applySigninEffects(m_signinFlow->retrySecurityKey());
+}
+
+void VpnManager::useAuthenticatorCode()
+{
+    if (m_signinFlow == nullptr) return;
+    DBG_CLI(QStringLiteral("Switching sign-in to an authenticator code."));
+    applySigninEffects(m_signinFlow->useCodeInstead());
+}
+
+void VpnManager::applySigninEffects(const SigninEffects& effects)
+{
+    for (const SigninEffect& effect : effects)
+    {
+        switch (effect.type)
+        {
+            case SigninEffect::Type::Start:
+                startSigninProcess(effect.arguments);
+                break;
+
+            case SigninEffect::Type::Write:
+                // Never logged: this is the password, a code, or a PIN.
+                if (m_signinProcess != nullptr)
+                {
+                    m_signinProcess->write(effect.text.toUtf8());
+                }
+                break;
+
+            case SigninEffect::Type::Prompt:
+                DBG_CLI(QStringLiteral("Sign-in is waiting for: ") + signinPromptName(effect.prompt) +
+                        (effect.message.isEmpty() ? QString() : QStringLiteral(" (") + effect.message + QStringLiteral(")")));
+                emit signinPrompt(effect.prompt, effect.message);
+                break;
+
+            case SigninEffect::Type::Finish:
+                finishSignin(effect.ok, effect.message);
+                return;
+        }
+    }
+}
+
+void VpnManager::startSigninProcess(const QStringList& arguments)
+{
+    stopSigninProcess();
+
+    QProcess* process = new QProcess(this);
+    m_signinProcess = process;
 
     // When the Qt app is launched from a terminal, child processes inherit the
     // controlling terminal.  Python's getpass.getpass() then opens /dev/tty
@@ -370,121 +437,115 @@ void VpnManager::login(const QString& username, const QString& password)
     // setsid() in the child (between fork and exec) creates a new session with
     // no controlling terminal, so getpass falls back to writing the prompt to
     // stderr and reading the answer from stdin, both of which QProcess pipes.
-    m_signinProcess->setChildProcessModifier([]()
+    // stopSigninProcess() stops the CLI with SIGINT, which the CLI would
+    // ignore if the app was started with it ignored (as a script's background
+    // job is): ignored signals are inherited.
+    process->setChildProcessModifier([]()
     {
         ::setsid();
+        ::signal(SIGINT, SIG_DFL);
     });
 
-    struct State
+    // Standard output and error go to the flow in the order they arrive: the
+    // CLI prints some prompts on one and some on the other.
+    const auto deliver = [this, process](const QByteArray& bytes)
     {
-        QString accumulated;
-        bool passwordSent = false;
-        bool twoFAEmitted = false;
+        if (process != m_signinProcess || m_signinFlow == nullptr) return;
+        applySigninEffects(m_signinFlow->onOutput(QString::fromUtf8(bytes)));
     };
-    State* state = new State();
-
-    auto processOutput = [this, process, state, password]()
+    connect(process, &QProcess::readyReadStandardOutput, this, [process, deliver]()
     {
-        if (state->passwordSent == false &&
-            state->accumulated.contains(QStringLiteral("Password:")))
-        {
-            state->passwordSent = true;
-            process->write((password + QLatin1Char('\n')).toUtf8());
-        }
+        deliver(process->readAllStandardOutput());
+    });
+    connect(process, &QProcess::readyReadStandardError, this, [process, deliver]()
+    {
+        deliver(process->readAllStandardError());
+    });
 
-        if (state->twoFAEmitted == false &&
-            state->accumulated.contains(QStringLiteral("2FA Token:")))
+    const auto ended = [this, process](const int exitCode)
+    {
+        process->deleteLater();
+        if (process != m_signinProcess) return; // replaced or stopped on purpose
+        m_signinProcess = nullptr;
+        DBG_CLI(QStringLiteral("<<< protonvpn signin [exit=%1]").arg(exitCode));
+        if (m_signinFlow != nullptr)
         {
-            state->twoFAEmitted = true;
-            DBG_CLI(QStringLiteral("Two-factor authentication required."));
-            emit twoFactorRequired();
+            applySigninEffects(m_signinFlow->onFinished(exitCode));
         }
     };
+    connect(process, &QProcess::finished, this, [ended](const int exitCode, const QProcess::ExitStatus status)
+    {
+        ended(status == QProcess::NormalExit ? exitCode : CLI_EXIT_CRASHED);
+    });
+    // A CLI that cannot be started never emits finished().
+    connect(process, &QProcess::errorOccurred, this, [ended](const QProcess::ProcessError error)
+    {
+        if (error == QProcess::FailedToStart)
+        {
+            ended(CLI_EXIT_FAILED_TO_START);
+        }
+    });
 
-    connect(process, &QProcess::readyReadStandardOutput, this,
-            [process, state, processOutput]()
-            {
-                state->accumulated.append(QString::fromUtf8(process->readAllStandardOutput()));
-                processOutput();
-            });
+    QStringList logged = arguments;
+    if (logged.size() > SIGNIN_USERNAME_ARG)
+    {
+        logged[SIGNIN_USERNAME_ARG] = LogRedaction::username(logged[SIGNIN_USERNAME_ARG]);
+    }
+    DBG_CLI(QStringLiteral(">>> protonvpn ") + logged.join(QLatin1Char(' ')));
 
-    connect(process, &QProcess::readyReadStandardError, this,
-            [process, state, processOutput]()
-            {
-                state->accumulated.append(QString::fromUtf8(process->readAllStandardError()));
-                processOutput();
-            });
-
-    connect(process, &QProcess::finished,
-            this, [this, process, state](const int exitCode, QProcess::ExitStatus)
-            {
-                const QString combined = state->accumulated.trimmed();
-                delete state;
-
-                // If cancelLogin() was called first, m_signinProcess is already
-                // nullptr - don't emit loginFinished for a deliberate cancellation.
-                if (process != m_signinProcess)
-                {
-                    process->deleteLater();
-                    return;
-                }
-                m_signinProcess = nullptr;
-                process->deleteLater();
-
-                const bool ok = exitCode == 0 && hasCliErrorLine(combined) == false;
-                DBG_CLI(ok ? QStringLiteral("Login succeeded.") : QStringLiteral("Login failed (exit=") + QString::number(exitCode) + QStringLiteral(")."));
-                QString errorMsg;
-                if (ok == false)
-                {
-                    const QStringList lines = combined.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-                    QStringList errorLines;
-                    for (const QString& line : lines)
-                    {
-                        const QString l = line.trimmed();
-                        if (l.isEmpty() == false
-                            && l.startsWith(QStringLiteral("Password:")) == false
-                            && l.startsWith(QStringLiteral("2FA")) == false
-                            && l.startsWith(QStringLiteral("Warning:")) == false
-                            && l.startsWith(QStringLiteral("Traceback")) == false
-                            && l.contains(QStringLiteral(".py:")) == false
-                            && line.front() != QLatin1Char(' ')
-                            && line.front() != QLatin1Char('\t'))
-                        {
-                            errorLines.append(l);
-                        }
-                    }
-                    errorMsg = errorLines.isEmpty() ? combined : errorLines.join(QLatin1Char('\n'));
-                }
-                else
-                {
-                    m_signedIn = true;
-                    startStatusMonitor();
-                    fetchAccountType();
-                    fetchSettings();
-                }
-                emit loginFinished(ok, errorMsg);
-            });
-
-    auto [program, fullArgs] = buildCliCommand({QStringLiteral("signin"), username});
+    auto [program, fullArgs] = buildCliCommand(arguments);
     process->start(program, fullArgs);
 }
 
-void VpnManager::cancelLogin()
+void VpnManager::stopSigninProcess()
 {
-    if (m_signinProcess != nullptr)
+    QProcess* process = m_signinProcess;
+    m_signinProcess = nullptr; // its output and exit are ignored from here on
+    if (process == nullptr) return;
+
+    if (process->state() != QProcess::Running || process->processId() <= 0)
     {
-        m_signinProcess->kill();
-        m_signinProcess->deleteLater();
-        m_signinProcess = nullptr;
+        // Not started yet (or already gone): nothing to interrupt.
+        process->kill();
+        if (process->state() == QProcess::NotRunning)
+        {
+            process->deleteLater();
+        }
+        return;
     }
+
+    // SIGINT, as Ctrl+C would send in a terminal: the CLI stops reading the
+    // security key and exits on its own (flatpak-spawn forwards the signal to
+    // the CLI on the host). Killed if it is still running after a moment.
+    ::kill(static_cast<pid_t>(process->processId()), SIGINT);
+    QTimer::singleShot(CLI_TERMINATE_GRACE_MS, process, [process]()
+    {
+        if (process->state() != QProcess::NotRunning)
+        {
+            process->kill();
+        }
+    });
 }
 
-void VpnManager::submit2FA(const QString& token) const
+void VpnManager::endSignin()
 {
-    if (m_signinProcess != nullptr && m_signinProcess->state() == QProcess::Running)
+    ++m_signinAttempt;
+    stopSigninProcess();
+    m_signinFlow.reset();
+}
+
+void VpnManager::finishSignin(const bool ok, const QString& error)
+{
+    DBG_CLI(ok == true ? QStringLiteral("Login succeeded.") : QStringLiteral("Login failed: ") + error);
+    endSignin();
+    if (ok == true)
     {
-        m_signinProcess->write((token + QStringLiteral("\n")).toUtf8());
+        m_signedIn = true;
+        startStatusMonitor();
+        fetchAccountType();
+        fetchSettings();
     }
+    emit loginFinished(ok, error);
 }
 
 void VpnManager::signOut()
@@ -860,19 +921,7 @@ void VpnManager::fetchCliVersion()
     // (semver) appears on the last banner line.
     runCommand({}, [this](int, const QString& out, const QString& err)
     {
-        const QString combined = out + QLatin1Char('\n') + err;
-        const QRegularExpression re(QStringLiteral(R"(\b(\d+\.\d+\.\d+)\b)"));
-        const QStringList lines = combined.split(QLatin1Char('\n'));
-        for (const QString& line : std::ranges::reverse_view(lines))
-        {
-            const QRegularExpressionMatch match = re.match(line);
-            if (match.hasMatch())
-            {
-                emit cliVersionReady(match.captured(1));
-                return;
-            }
-        }
-        emit cliVersionReady(QString());
+        emit cliVersionReady(CliVersion::fromBanner(out + QLatin1Char('\n') + err));
     });
 }
 

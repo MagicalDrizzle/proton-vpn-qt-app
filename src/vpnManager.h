@@ -3,6 +3,8 @@
 #include <QProcess>
 #include <QString>
 #include <QMap>
+#include <memory>
+#include "cli/signin/signinFlow.h"
 
 class StatusMonitor; // cli/statusMonitor.h - forward-declared to keep this
                      // header lightweight; full type used only in vpnManager.cpp.
@@ -33,9 +35,17 @@ public:
 
     void checkInstalled();
     void checkLoginStatus();
+    // Signs in with the conversation that fits the installed CLI (see
+    // cli/signin/signinFlows.h); the second factor is asked for through
+    // signinPrompt() and answered with the calls below.
     void login(const QString& username, const QString& password);
     void cancelLogin();
-    void submit2FA(const QString& token) const;
+    void submit2FA(const QString& code);
+    void submitSecurityKeyPin(const QString& pin);
+    // Presses Enter at "insert your security key", or tries the key again after it failed.
+    void retrySecurityKey();
+    // Signs in again with an authenticator or recovery code instead of the security key.
+    void useAuthenticatorCode();
     void signOut();
     void connectVpn(const QString& country = QString(), const QString& city = QString());
     // Like connectVpn(), but for the startup auto-connect path only: waits
@@ -66,7 +76,6 @@ public:
     void fetchAccountType();
 
     VpnState    currentState()       const { return m_state; }
-    bool        isLoginInProgress()  const { return m_signinProcess != nullptr && m_signinProcess->state() == QProcess::Running; }
     AccountType accountType()        const { return m_accountType; }
     // Last country / city passed to connectVpn() - empty if connected via CLI.
     // After a reconnect to a server by name, the country is that server's.
@@ -82,7 +91,9 @@ public:
 signals:
     void installedResult(bool installed);
     void loginStatusResult(bool loggedIn, const QString& username);
-    void twoFactorRequired();
+    // Sign-in needs the user: a code, or something about the security key.
+    // `error` is why the previous answer failed, when it did.
+    void signinPrompt(SigninPrompt prompt, const QString& error);
     void loginFinished(bool ok, const QString& error);
     void signOutFinished(bool ok);
     void connectionStateChanged(VpnState state, const QString& info);
@@ -124,6 +135,8 @@ private:
     QString     m_lastConnectCity;       // city    arg last passed to connectVpn()
     QString     m_lastConnectServer;     // server name last connected to by name, e.g. "US-NJ#203"
     QProcess*       m_signinProcess  = nullptr;
+    std::unique_ptr<SigninFlow> m_signinFlow; // the conversation with the running `protonvpn signin`
+    int             m_signinAttempt  = 0;     // bumped when a sign-in ends, so late replies are ignored
     StatusMonitor*  m_statusMonitor  = nullptr;
     QMap<QString, QString> m_settings;   // see settings()
     int             m_configSetsInFlight = 0; // `config set` commands not yet finished
@@ -132,6 +145,15 @@ private:
     // Only what the user has changed is in there, so this is the fallback for
     // when the CLI cannot answer, and the full custom DNS list.
     static QMap<QString, QString> readSettingsFile();
+
+    // Sign-in: the running flow's effects, and the `protonvpn signin` they drive.
+    void applySigninEffects(const SigninEffects& effects);
+    void startSigninProcess(const QStringList& arguments);
+    // Interrupts the running sign-in CLI, if any, and ignores it from then on.
+    void stopSigninProcess();
+    // Drops the sign-in in progress: its CLI, its flow, and any reply still on its way.
+    void endSignin();
+    void finishSignin(bool ok, const QString& error);
 
     // Runs `protonvpn <args>` and calls back with its exit code and output.
     // With a timeoutMs, a CLI that has not exited by then is terminated and

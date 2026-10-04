@@ -159,3 +159,50 @@ add_qt_test(tst_flatpakUtils
     ../cli/flatpakUtils.h
 )
 
+#  CliVersion (header-only)
+add_qt_test(tst_cliVersion
+    tst_cliVersion.cpp
+    cliBanner.h
+    ../cli/cliVersion.h
+)
+
+#  Sign-in: choosing the flow for the CLI version
+add_qt_test(tst_signinFlows
+    tst_signinFlows.cpp
+    cliBanner.h
+    signinTestUtils.h
+    ../cli/cliVersion.h
+    ../cli/signin/signinFlow.h
+    ../cli/signin/signinFlow.cpp
+    ../cli/signin/legacySigninFlow.h
+    ../cli/signin/securityKeySigninFlow.h
+    ../cli/signin/securityKeySigninFlow.cpp
+    ../cli/signin/signinFlows.h
+    ../cli/signin/signinFlows.cpp
+)
+
+#  Sign-in with CLI 1.0.0 to 1.0.3
+add_qt_test(tst_legacySigninFlow
+    tst_legacySigninFlow.cpp
+    signinTestUtils.h
+    ../cli/signin/signinFlow.h
+    ../cli/signin/signinFlow.cpp
+    ../cli/signin/legacySigninFlow.h
+)
+
+#  Sign-in with CLI 1.0.4 and newer (security keys, --totp)
+add_qt_test(tst_securityKeySigninFlow
+    tst_securityKeySigninFlow.cpp
+    signinTestUtils.h
+    ../cli/signin/signinFlow.h
+    ../cli/signin/signinFlow.cpp
+    ../cli/signin/securityKeySigninFlow.h
+    ../cli/signin/securityKeySigninFlow.cpp
+)
+
+#  StackPage (header-only)
+add_qt_test(tst_stackPage
+    tst_stackPage.cpp
+    ../widgets/stackPage.h
+)
+target_link_libraries(tst_stackPage Qt6::Widgets)

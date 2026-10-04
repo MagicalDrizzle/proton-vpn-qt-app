@@ -120,11 +120,6 @@ private:
     bool m_whatsNewShown = false; // guard so we only show the dialog once per launch
 #ifdef QT_DEBUG
     Page m_preDebugPage = Page::Login; // page to return to when leaving Debug
+    bool m_signinPreview = false;      // the login page shows a Debug page preview
 #endif
-
-    // Credentials held in memory only while a login is in progress or retrying 2FA.
-    // Wiped on successful login or when the user cancels back to the credentials page.
-    QString m_loginUsername;
-    QString m_loginPassword;
-    QString m_pending2FAToken; // set when re-running login to auto-submit a 2FA retry
 };

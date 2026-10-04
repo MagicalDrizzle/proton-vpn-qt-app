@@ -3,6 +3,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QLabel>
+#include "../cli/signin/signinFlow.h"
 #ifdef QT_DEBUG
 #include <QLineEdit>
 #endif
@@ -25,6 +26,8 @@ signals:
     // to reproduce the failure: a missing CLI, or a login check that timed out.
     void notInstalledPageRequested();
     void cliNotRespondingPageRequested();
+    // Show the login page on one of its second-factor screens.
+    void signinScreenRequested(SigninPrompt prompt, const QString& error);
 
 private slots:
     void refreshValues() const;

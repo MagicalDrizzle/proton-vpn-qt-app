@@ -54,6 +54,8 @@ This transparently wraps commands with `flatpak-spawn --host` when inside a Flat
 | `cli/statusmonitor.h/cpp` | Background `protonvpn status` polling subprocess |
 | `cli/flatpakutils.h` | `buildHostCommand()` for Flatpak-safe subprocess spawning |
 | `cli/protonvpncli.cpp` | CLI command builder helpers |
+| `cli/signin/` | The `protonvpn signin` conversation, one `SigninFlow` per CLI version range (`SigninFlows::forCliVersion()` picks it); flows only read output and return effects, so they are unit-tested with the CLI's exact output |
+| `cli/cliVersion.h` | Reads the CLI version from the banner `protonvpn` prints without a command |
 | `appconfig.h/cpp` | App preferences → `~/.config/ProtonVPN-Qt/app.json` |
 | `connectionhistory.h/cpp` | Recent connections → `$XDG_DATA_HOME/ProtonVPN-Qt/history.json` |
 | `main.cpp` | Palette, style, single-instance lock, version from `version.json` |
@@ -66,6 +68,7 @@ This transparently wraps commands with `flatpak-spawn --host` when inside a Flat
 - **Singletons** via `static T& instance()`: `AppConfig`, `ConnectionHistory`
 - **Logging**: use `DBG_APP(msg)`, `DBG_CLI(msg)`, `DBG_SETTINGS(msg)` macros (stdout, tagged+timestamped). Never use `qDebug()`.
 - **Versioning**: single source of truth is `src/version.json` (keys: `app_version`, `cli_version_tested_min`, `cli_version_tested_max`); read at runtime via embedded resource `:/version.json`
+- **Standalone AppImage bundles the latest CLI**: the Standalone AppImage must always ship the newest released Proton VPN CLI. It bundles exactly `cli_version_tested_max`, so when Proton releases a new CLI, support it in the app and raise `cli_version_tested_max` to it (never pin the bundle to an older CLI). Check that `build-appimage_standalone.sh` installs any new Python dependencies the CLI needs.
 - **Palette**: dark Proton-branded theme set in `main.cpp` (`bg #1a1a2e`, accent purple `#6d4aff`)
 - **Translations**: Qt Linguist, source file `i18n/proton_vpn_qt_en.ts`; UI strings use `tr()` or `QCoreApplication::translate()`
 - **Language**: American English only: variable names, comments, and default/fallback text strings (e.g. `color` not `colour`, `canceled` not `cancelled`, `initialize` not `initialise`)
