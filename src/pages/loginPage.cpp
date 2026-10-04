@@ -405,9 +405,13 @@ void LoginPage::showSecurityKey(const SigninPrompt prompt)
     m_keyActionBtn->setVisible(action.isEmpty() == false);
     m_keyActionBtn->setText(action);
     m_keyActionBtn->setEnabled(true);
-    // Once the key has been read, signing in is already under way.
-    m_keyUseCodeBtn->setVisible(prompt != SigninPrompt::SecurityKeyRead);
+    // Once the key has been read, signing in is already under way: there is
+    // nothing to switch to or go back from.
+    const bool keyRead = prompt == SigninPrompt::SecurityKeyRead;
+    m_keyUseCodeBtn->setVisible(keyRead == false);
     m_keyUseCodeBtn->setEnabled(true);
+    m_keyCancelBtn->setVisible(keyRead == false);
+    m_keyCancelBtn->setText(tr("Go Back")); // a Debug page preview relabels it
     m_keyCancelBtn->setEnabled(true);
 
     m_stack->setCurrentIndex(STACK_INDEX_KEY);
@@ -416,6 +420,20 @@ void LoginPage::showSecurityKey(const SigninPrompt prompt)
         m_keyPinEdit->setFocus();
     }
 }
+
+#ifdef QT_DEBUG
+void LoginPage::showSigninPreview(const SigninPrompt prompt, const QString& error)
+{
+    showSigninPrompt(prompt, error);
+    // The signing-in screen has no Go Back, but a preview needs one to
+    // return to the Debug page.
+    if (prompt == SigninPrompt::SecurityKeyRead)
+    {
+        m_keyCancelBtn->setText(tr("DEBUG: Go Back"));
+        m_keyCancelBtn->setVisible(true);
+    }
+}
+#endif
 
 void LoginPage::showCodePrompt() const
 {

@@ -23,6 +23,11 @@ public:
     // or the security key view in that state. `error` says why the last
     // answer failed.
     void showSigninPrompt(SigninPrompt prompt, const QString& error);
+#ifdef QT_DEBUG
+    // showSigninPrompt() for a Debug page preview: a screen without a Go Back
+    // gets one, marked as a debug control, to return to the Debug page.
+    void showSigninPreview(SigninPrompt prompt, const QString& error);
+#endif
     void reset() const; // return to username/password view
     void checkPrereleaseBanner();
 

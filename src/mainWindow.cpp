@@ -326,7 +326,7 @@ MainWindow::MainWindow(QWidget* parent)
         // A preview only: with no sign-in in progress, its buttons do nothing
         // but Go Back, which returns to the Debug page.
         m_loginPage->reset();
-        m_loginPage->showSigninPrompt(prompt, error);
+        m_loginPage->showSigninPreview(prompt, error);
         m_signinPreview = true;
         showPage(Page::Login);
     });
